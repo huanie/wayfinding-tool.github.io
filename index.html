@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>寻路模拟工具 Wayfinding Tool</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brandBlock">
+          <h1><i data-lucide="waves" aria-hidden="true"></i><span>寻路模拟工具 <span class="titleEnglish">Wayfinding Tool</span></span></h1>
+          <p>在平面图上构建空间与导向信息，并模拟、比较和复盘真实寻路过程。</p>
+        </div>
+
+        <section class="projectSection">
+          <h2>项目</h2>
+          <label class="upload">
+            <input id="projectInput" type="file" accept="application/json,.json" />
+            <i data-lucide="folder-open" aria-hidden="true"></i>
+            <span>导入项目</span>
+          </label>
+          <button id="saveProject" class="plainAction" type="button"><i data-lucide="save" aria-hidden="true"></i><span>保存项目</span></button>
+        </section>
+
+        <section class="stepSection">
+          <h2 class="stepTitle">1. 绘制空间环境</h2>
+          <div class="modeGrid" role="group" aria-label="选择编辑步骤">
+            <button id="baseMode" type="button"><i data-lucide="image-up" aria-hidden="true"></i><span>底图导入</span></button>
+            <div id="basePanel" class="inlinePanel" hidden>
+              <label class="upload">
+                <input id="baseInput" type="file" accept="image/*,.pdf,.dxf" />
+                <span>导入 DXF / PDF / 图片</span>
+              </label>
+              <button id="toggleGrayscale" class="plainAction activeControl" type="button">转换灰度</button>
+              <div class="row opacityRow">
+                <div class="controlLabel">
+                  <label for="baseOpacity">调节透明度</label>
+                  <output id="baseOpacityValue" for="baseOpacity">100%</output>
+                </div>
+                <input id="baseOpacity" type="range" min="0" max="100" value="100" />
+              </div>
+              <button id="exportBase" class="plainAction" type="button">导出处理后的底图</button>
+            </div>
+            <button id="scaleMode" type="button"><i data-lucide="ruler" aria-hidden="true"></i><span>比例尺</span></button>
+            <div id="scalePanel" class="inlinePanel" hidden>
+              <div class="segmented scaleModeTabs" role="group" aria-label="比例尺输入模式">
+                <button id="customScaleMode" class="active" type="button">自定义比例</button>
+                <button id="quickScaleMode" type="button">快捷比例</button>
+              </div>
+              <section id="customScalePanel" class="panelSection">
+                <button id="drawScaleReference" class="plainAction" type="button">绘制图上距离</button>
+                <button id="addScaleReference" class="plainAction" type="button">添加参考</button>
+                <div id="scaleReferenceList" class="scaleReferenceList"></div>
+              </section>
+              <section id="quickScalePanel" class="panelSection" hidden>
+                <div class="scaleOptions" role="group" aria-label="比例尺真实距离">
+                  <button type="button" data-scale-meters="2">2米</button>
+                  <button type="button" data-scale-meters="5">5米</button>
+                  <button type="button" data-scale-meters="10">10米</button>
+                </div>
+                <p class="panelNote">选择距离并在图上绘制，按 Enter 确认。</p>
+              </section>
+              <section class="panelSection">
+                <p id="scaleInstruction" class="panelNote">选择一个距离，然后在图上点击两点绘制标定线。</p>
+                <p id="scaleResult" class="scaleResult">尚未标定比例尺</p>
+                <button id="clearScale" class="plainAction" type="button">清除比例尺</button>
+              </section>
+            </div>
+            <button id="routeMode" type="button"><i data-lucide="route" aria-hidden="true"></i><span>动线</span></button>
+            <div id="routePanel" class="inlinePanel" hidden>
+              <div class="segmented routeModeTabs" role="group" aria-label="选择动线操作">
+                <button id="routeDrawMode" class="active" type="button">绘制动线</button>
+                <button id="editMode" type="button">调整动线</button>
+              </div>
+              <section id="routeTools" class="panelSection">
+                <h2>动线类型</h2>
+                <div class="segmented" role="group" aria-label="选择线型">
+                  <button id="primaryMode" class="active" type="button">主动线</button>
+                  <button id="secondaryMode" type="button">次动线</button>
+                </div>
+              </section>
+              <section class="panelSection">
+                <h2>吸附规则</h2>
+                <label class="check">
+                  <input id="angleSnap" type="checkbox" checked />
+                  <span>正交 / 45 度吸附</span>
+                </label>
+                <label class="check">
+                  <input id="nodeSnap" type="checkbox" checked />
+                  <span>吸附已有节点</span>
+                </label>
+                <label class="check">
+                  <input id="intersectionSnap" type="checkbox" checked />
+                  <span>吸附线段及延长线交点</span>
+                </label>
+              </section>
+              <section class="panelSection">
+                <h2>操作</h2>
+                <div class="actions">
+                  <button id="finishLine" type="button" hidden>结束当前线</button>
+                  <button id="undo" type="button" hidden>撤销</button>
+                  <button id="clear" type="button">清空当前步骤</button>
+                  <button id="exportJson" type="button" hidden>导出 Demo 数据</button>
+                </div>
+              </section>
+            </div>
+            <button id="widthMode" type="button"><i data-lucide="sliders-horizontal" aria-hidden="true"></i><span>行走范围</span></button>
+            <div id="widthPanel" class="inlinePanel" hidden>
+              <h2>宽度精调</h2>
+              <div class="numberRow widthNumberRow">
+                <input id="widthInput" type="number" min="0" max="280" step="1" value="84" />
+                <span id="widthUnit" class="fieldUnit">px</span>
+                <button id="applyWidth" type="button">应用</button>
+              </div>
+              <label class="check compact">
+                <input id="showWidthLabels" type="checkbox" checked />
+                <span>显示宽度</span>
+              </label>
+              <button id="confirmInterface" class="plainAction" type="button">确认行走范围</button>
+            </div>
+            <button id="infoMode" type="button"><i data-lucide="map-pin" aria-hidden="true"></i><span>空间信息</span></button>
+            <div id="spacePanel" class="inlinePanel" hidden>
+              <input id="infoInput" type="file" accept="image/*,.pdf" hidden />
+              <div class="fieldStack">
+                <select id="spaceType">
+                  <option value="elevator_lobby">电梯厅</option>
+                  <option value="work_area">工区</option>
+                  <option value="meeting_room">会议室</option>
+                  <option value="pantry">茶水间</option>
+                  <option value="male_restroom">男卫生间</option>
+                  <option value="female_restroom">女卫生间</option>
+                  <option value="restroom">卫生间</option>
+                  <option value="print_area">打印区</option>
+                  <option value="multifunction_room">多功能室</option>
+                  <option value="training_room">培训室</option>
+                  <option value="lab">实验室</option>
+                  <option value="discussion_pod">讨论舱</option>
+                  <option value="service_room">服务室</option>
+                  <option value="phone">电话亭</option>
+                  <option value="other">其他</option>
+                </select>
+                <select id="spaceNumber">
+                  <option value="">自动编号</option>
+                </select>
+                <input id="spaceName" type="text" placeholder="自定义名称（可选）" />
+              </div>
+              <label class="check compact">
+                <input id="showSpaceLabels" type="checkbox" />
+                <span>显示空间信息名称</span>
+              </label>
+              <button id="deleteSpace" class="plainAction" type="button">删除选中空间信息</button>
+            </div>
+            <button id="signMode" type="button"><i data-lucide="signpost" aria-hidden="true"></i><span>导向信息</span></button>
+            <div id="signPanel" class="inlinePanel" hidden>
+              <div class="segmented subModeTabs" role="group" aria-label="选择导向信息操作">
+                <button id="signPlacementMode" type="button">标识布点</button>
+                <button id="signInfoMode" type="button">添加导向信息</button>
+              </div>
+              <div id="signPlacementFields" class="fieldStack">
+                <select id="signInstallType">
+                  <option value="wall">贴墙式</option>
+                  <option value="hanging">悬挂式</option>
+                  <option value="film">贴膜式</option>
+                  <option value="standing">立牌</option>
+                </select>
+                <label id="signHangingFacingField" class="fieldLabel">
+                  <span>吊牌朝向</span>
+                  <select id="signHangingFacing">
+                    <option value="upDown">上下</option>
+                    <option value="leftRight">左右</option>
+                  </select>
+                </label>
+              </div>
+              <div id="signInfoControls" class="fieldStack" hidden>
+                <button id="uploadSignCode" class="plainAction" type="button">上传导向代码</button>
+              </div>
+              <label class="check compact">
+                <input id="showSignLabels" type="checkbox" />
+                <span>显示导向编号</span>
+              </label>
+              <label class="check compact">
+                <input id="showSignInfoLabels" type="checkbox" />
+                <span>显示导向信息名称</span>
+              </label>
+              <button id="deleteSign" class="plainAction" type="button">删除选中导向信息</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="stepSection">
+          <h2 class="stepTitle">2. 寻路测试</h2>
+          <div class="modeGrid" role="group" aria-label="选择寻路测试步骤">
+            <button id="personMode" type="button"><i data-lucide="user-round" aria-hidden="true"></i><span>人物设定</span></button>
+            <div id="personPanel" class="inlinePanel" hidden>
+              <section class="panelSection">
+                <h2>视野距离 <span id="visionDistanceUnit">px</span></h2>
+                <div class="sliderNumber">
+                  <input id="visionDistanceRange" type="range" min="0" max="360" value="140" />
+                  <input id="visionDistanceValue" type="number" min="0" max="360" step="1" value="140" />
+                </div>
+              </section>
+              <section class="panelSection">
+                <h2>常规视角</h2>
+                <div class="sliderNumber">
+                  <input id="normalAngleRange" type="range" min="30" max="360" value="90" />
+                  <input id="normalAngleValue" type="number" min="30" max="360" step="1" value="90" />
+                </div>
+              </section>
+              <section class="panelSection">
+                <h2>决策点视角</h2>
+                <div class="sliderNumber">
+                  <input id="decisionAngleRange" type="range" min="60" max="360" value="180" />
+                  <input id="decisionAngleValue" type="number" min="60" max="360" step="1" value="180" />
+                </div>
+              </section>
+            </div>
+            <button id="testMode" type="button"><i data-lucide="map-pinned" aria-hidden="true"></i><span>起点和终点</span></button>
+            <div id="testPanel" class="inlinePanel" hidden>
+              <section class="panelSection">
+                <h2>起点选择</h2>
+                <div class="segmented" role="group" aria-label="选择起点方式">
+                  <button id="spaceStartMode" class="active" type="button">空间起点</button>
+                  <button id="freeStartMode" type="button">平面选点</button>
+                </div>
+                <div class="selectionActions">
+                  <label class="check compact selectionModeToggle">
+                    <input id="startMultiSelect" type="checkbox" />
+                    <span>多选</span>
+                  </label>
+                  <label class="check compact selectAllSpaces">
+                    <input id="selectAllStarts" type="checkbox" />
+                    <span>全选</span>
+                  </label>
+                </div>
+                <details id="testStartDropdown" class="multiSelectDropdown">
+                  <summary id="testStartDropdownLabel">选择空间起点</summary>
+                  <div id="testStartChecklist" class="testSpaceChecklist"></div>
+                </details>
+                <select id="testStartSelect" multiple hidden aria-hidden="true">
+                  <option value="">选择起点空间</option>
+                </select>
+              </section>
+              <section class="panelSection">
+                <h2>终点选择</h2>
+                <div class="selectionActions">
+                  <label class="check compact selectionModeToggle">
+                    <input id="endMultiSelect" type="checkbox" />
+                    <span>多选</span>
+                  </label>
+                  <label class="check compact selectAllSpaces">
+                    <input id="selectAllEnds" type="checkbox" />
+                    <span>全选</span>
+                  </label>
+                </div>
+                <details id="testEndDropdown" class="multiSelectDropdown">
+                  <summary id="testEndDropdownLabel">选择终点空间</summary>
+                  <div id="testEndChecklist" class="testSpaceChecklist"></div>
+                </details>
+                <select id="testEndSelect" multiple hidden aria-hidden="true">
+                  <option value="">选择终点空间</option>
+                </select>
+                <button id="clearTestPoints" class="plainAction" type="button">清空起终点</button>
+              </section>
+            </div>
+            <button id="optimalMode" type="button"><i data-lucide="git-compare-arrows" aria-hidden="true"></i><span>最优路径</span></button>
+            <div id="optimalPanel" class="inlinePanel" hidden>
+              <button id="buildOptimalPath" class="plainAction" type="button">生成最优路径</button>
+            </div>
+            <button id="simulateMode" type="button"><i data-lucide="waypoints" aria-hidden="true"></i><span>模拟路径</span></button>
+            <div id="simulatePanel" class="inlinePanel" hidden>
+              <section class="panelSection">
+                <h2>初始方向</h2>
+                <label class="check compact">
+                  <input id="useDefaultHeading" type="checkbox" checked />
+                  <span>默认方向</span>
+                </label>
+                <div class="directionPad" role="group" aria-label="选择模拟初始方向">
+                  <button type="button" data-start-heading="225">西北</button>
+                  <button type="button" data-start-heading="270">北</button>
+                  <button type="button" data-start-heading="315">东北</button>
+                  <button type="button" data-start-heading="180">西</button>
+                  <div id="startHeadingLabel">按最优路径</div>
+                  <button type="button" data-start-heading="0">东</button>
+                  <button type="button" data-start-heading="135">西南</button>
+                  <button type="button" data-start-heading="90">南</button>
+                  <button type="button" data-start-heading="45">东南</button>
+                </div>
+              </section>
+              <button id="runSimulation" class="plainAction" type="button">开始模拟</button>
+              <button id="clearSimulation" class="plainAction" type="button">清空模拟路径</button>
+              <label class="check compact">
+                <input id="showPathLabels" type="checkbox" checked />
+                <span>显示路径编号</span>
+              </label>
+              <div id="simulationStatus" class="placeholderText">蓝色路径用于显示人的实际行走结果。</div>
+            </div>
+            <button id="feedbackMode" type="button"><i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span>模拟结果</span></button>
+            <div id="feedbackPanel" class="inlinePanel" hidden>
+              <div id="resultRoutePicker" class="simulationRoutePicker resultRoutePicker" hidden></div>
+              <section class="panelSection resultFeedbackSection">
+                <h2>问题反馈</h2>
+                <div id="feedbackSummary" class="placeholderText">还没有模拟问题点。</div>
+              </section>
+            </div>
+            <button id="simulationLogMode" type="button"><i data-lucide="list-tree" aria-hidden="true"></i><span>模拟记录</span></button>
+            <div id="simulationLogPanel" class="inlinePanel" hidden>
+              <div id="simulationLogEmpty" class="placeholderText">开始模拟后，这里会按步骤记录完整的寻路过程。</div>
+              <ol id="simulationLogList" class="simulationLogList"></ol>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>图层管理</h2>
+          <div class="layerGrid">
+            <label class="check"><input id="layerBase" type="checkbox" checked /><span>底图</span></label>
+            <label class="check"><input id="layerRoutes" type="checkbox" checked /><span>动线</span></label>
+            <label class="check"><input id="layerSurface" type="checkbox" checked /><span>行走范围</span></label>
+            <label class="check"><input id="layerSpaces" type="checkbox" checked /><span>空间信息</span></label>
+            <label class="check"><input id="layerSigns" type="checkbox" checked /><span>导向信息</span></label>
+            <label class="check"><input id="layerTestPoints" type="checkbox" checked /><span>起点和终点</span></label>
+            <label class="check"><input id="layerOptimalPath" type="checkbox" checked /><span>最优路径</span></label>
+            <label class="check"><input id="layerActualPath" type="checkbox" checked /><span>模拟路径</span></label>
+            <label class="check"><input id="layerSimulationRecords" type="checkbox" checked /><span>模拟记录</span></label>
+          </div>
+        </section>
+
+        <section>
+          <h2>当前状态</h2>
+          <div id="status" class="status">等待导入底图</div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <div class="toolbar">
+          <div>
+            <strong id="toolTitle">请选择工具</strong>
+            <span id="toolHint">从左侧菜单选择一个栏目后开始操作。</span>
+          </div>
+          <div class="legend">
+            <span><i class="surface"></i>行走面</span>
+            <span><i class="red dashed"></i>主动线</span>
+            <span><i class="blue"></i>次动线</span>
+          </div>
+        </div>
+        <div id="canvasWrap" class="canvasWrap">
+          <div id="canvasBackdrop" class="canvasBackdrop" aria-hidden="true"></div>
+          <img id="baseImagePreview" class="baseImagePreview" alt="底图预览" hidden />
+          <canvas id="routeCanvas"></canvas>
+          <div id="scaleInlineEditor" class="canvasInlineEditor" hidden>
+            <input id="scaleActualDistance" type="number" min="0.01" step="0.01" placeholder="实际距离" />
+            <span>m</span>
+          </div>
+          <div id="widthInlineEditor" class="canvasInlineEditor" hidden>
+            <input id="widthInlineInput" type="number" step="0.01" />
+            <span id="widthInlineUnit">px</span>
+          </div>
+          <div id="signAssociationPanel" class="signAssociationOverlay" hidden>
+            <div class="associationHeader">
+              <div>
+                <strong id="signAssociationTitle">标识设置</strong>
+                <span id="signAssociationSubtitle">选择方向并关联空间信息</span>
+              </div>
+              <button id="finishSignAssociation" type="button">完成</button>
+            </div>
+            <div class="associationImport">
+              <label class="upload subtle">
+                <input id="signAssociationImport" type="file" accept=".json,.csv,.txt,.xlsx,.xls" />
+                <span>上传导向关联信息</span>
+              </label>
+            </div>
+            <div id="signAssociationEmpty" class="placeholderText">请先选择一个导向标识。</div>
+            <div id="signAssociationEditor" class="associationBody" hidden>
+              <div class="directionPanel">
+                <div class="signFaceDirection" data-sign-face-panel="front">
+                  <div class="panelCaption" data-sign-face-title="front">标识指向</div>
+                  <div class="associationDirections" role="group" aria-label="选择正面标识方向">
+                    <button class="dirUp" type="button" data-sign-face="front" data-sign-action="straight">↑<span>向前</span></button>
+                    <button class="dirUpLeft" type="button" data-sign-face="front" data-sign-action="leftFront">↖<span>左上</span></button>
+                    <button class="dirUpRight" type="button" data-sign-face="front" data-sign-action="rightFront">↗<span>右上</span></button>
+                    <button class="dirLeft" type="button" data-sign-face="front" data-sign-action="left">←<span>左转</span></button>
+                    <div class="dirCenter">正面</div>
+                    <button class="dirRight" type="button" data-sign-face="front" data-sign-action="right">→<span>右转</span></button>
+                    <button class="dirDown" type="button" data-sign-face="front" data-sign-action="back">↓<span>向后</span></button>
+                  </div>
+                </div>
+                <div class="signFaceDirection" data-sign-face-panel="back">
+                  <div class="panelCaption" data-sign-face-title="back">背面指向</div>
+                  <div class="associationDirections" role="group" aria-label="选择背面标识方向">
+                    <button class="dirUp" type="button" data-sign-face="back" data-sign-action="straight">↑<span>向前</span></button>
+                    <button class="dirUpLeft" type="button" data-sign-face="back" data-sign-action="leftFront">↖<span>左上</span></button>
+                    <button class="dirUpRight" type="button" data-sign-face="back" data-sign-action="rightFront">↗<span>右上</span></button>
+                    <button class="dirLeft" type="button" data-sign-face="back" data-sign-action="left">←<span>左转</span></button>
+                    <div class="dirCenter">背面</div>
+                    <button class="dirRight" type="button" data-sign-face="back" data-sign-action="right">→<span>右转</span></button>
+                    <button class="dirDown" type="button" data-sign-face="back" data-sign-action="back">↓<span>向后</span></button>
+                  </div>
+                </div>
+              </div>
+              <div id="signSpacePicker" class="spacePicker">
+                <div class="pickerHeader">
+                  <span id="signSpacePickerTitle">选择空间信息</span>
+                  <button id="confirmSignDirection" type="button">确认方向</button>
+                </div>
+                <div id="signSpaceChecklist" class="spaceChecklist"></div>
+              </div>
+            </div>
+          </div>
+          <div id="emptyState" class="empty">
+            <div>请先导入一张平面图</div>
+            <small>当前 Demo 可直接处理图片；PDF / DXF 会进入待转换状态</small>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="./lucide.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
