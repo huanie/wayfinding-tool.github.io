@@ -77,6 +77,7 @@ const spaceNameInput = document.querySelector("#spaceName");
 const spaceTypeInput = document.querySelector("#spaceType");
 const spaceNumberInput = document.querySelector("#spaceNumber");
 const deleteSpaceBtn = document.querySelector("#deleteSpace");
+const addEquivalentSpacePointsInput = document.querySelector("#addEquivalentSpacePoints");
 const showSpaceLabelsInput = document.querySelector("#showSpaceLabels");
 const showSignLabelsInput = document.querySelector("#showSignLabels");
 const showSignInfoLabelsInput = document.querySelector("#showSignInfoLabels");
@@ -132,8 +133,14 @@ const clearSimulationBtn = document.querySelector("#clearSimulation");
 const simulationStatus = document.querySelector("#simulationStatus");
 const simulationLogEmpty = document.querySelector("#simulationLogEmpty");
 const simulationLogList = document.querySelector("#simulationLogList");
+const prdMeanValue = document.querySelector("#prdMeanValue");
+const effectivePrdMeanValue = document.querySelector("#effectivePrdMeanValue");
+const failureDistanceMultiplierInput = document.querySelector("#failureDistanceMultiplier");
+const refreshSimulationResultsBtn = document.querySelector("#refreshSimulationResults");
+const testedRouteCount = document.querySelector("#testedRouteCount");
 const resultRoutePicker = document.querySelector("#resultRoutePicker");
 const feedbackSummary = document.querySelector("#feedbackSummary");
+const destinationFailureList = document.querySelector("#destinationFailureList");
 const showPathLabelsInput = document.querySelector("#showPathLabels");
 
 const layerInputs = {
@@ -180,8 +187,11 @@ const state = {
   interfaceConfirmed: false,
   infoMapName: "",
   spaces: [],
+  spaceEquivalentPoints: [],
   selectedSpaceId: null,
+  selectedEquivalentPointId: null,
   hoverSpaceId: null,
+  hoverEquivalentPointId: null,
   spaceNumberOverride: false,
   signs: [],
   selectedSignId: null,
@@ -210,7 +220,10 @@ const state = {
     routeResults: [],
     activeRouteId: "",
     focusedRouteId: "",
+    selectedResultRouteIds: [],
     showPathLabels: true,
+    failureDistanceMultiplier: 5,
+    expandedFailureDestinations: [],
     useDefaultHeading: true,
     startHeading: 0,
     person: {
@@ -265,7 +278,14 @@ function captureDrawingSnapshot(tool) {
       selectedIds: [...state.selectedIds],
     };
   }
-  if (tool === "info") return { spaces: structuredClone(state.spaces), selectedSpaceId: state.selectedSpaceId };
+  if (tool === "info") {
+    return {
+      spaces: structuredClone(state.spaces),
+      spaceEquivalentPoints: structuredClone(state.spaceEquivalentPoints),
+      selectedSpaceId: state.selectedSpaceId,
+      selectedEquivalentPointId: state.selectedEquivalentPointId,
+    };
+  }
   if (tool === "sign") return { signs: cloneSignsForHistory(state.signs), selectedSignId: state.selectedSignId };
   return null;
 }
@@ -293,7 +313,9 @@ function restoreDrawingSnapshot(tool, snapshot) {
     updateWidthInput();
   } else if (tool === "info") {
     state.spaces = structuredClone(snapshot.spaces);
+    state.spaceEquivalentPoints = structuredClone(snapshot.spaceEquivalentPoints || []);
     state.selectedSpaceId = snapshot.selectedSpaceId;
+    state.selectedEquivalentPointId = snapshot.selectedEquivalentPointId || null;
     syncSpaceFields();
     refreshSignTargets();
     refreshTestSpaceOptions();
@@ -365,16 +387,31 @@ const spaceTypeLabels = {
   female_restroom: "女卫生间",
   restroom: "卫生间",
   print_area: "打印区",
-  multifunction_room: "多功能室",
+  multifunction_room: "开放协作区",
   training_room: "培训室",
   lab: "实验室",
+  stairwell: "楼梯间",
+  live_room: "直播间",
   discussion_pod: "讨论舱",
   service_room: "服务室",
   phone: "电话亭",
+  small_post_office: "小邮局",
+  massage_room: "按摩室",
+  gym: "健身房",
+  restaurant: "餐厅",
+  exhibition_hall: "展厅",
+  admin_service_room: "行政服务室",
+  it_service_room: "IT服务室",
+  finance_service_room: "财务服务室",
+  hr_service_room: "HR服务室",
   other: "其他",
 };
 
-const numberedSpaceTypes = new Set(["meeting_room", "training_room", "lab", "work_area", "discussion_pod", "elevator_lobby"]);
+const numberedSpaceTypes = new Set([
+  "meeting_room", "training_room", "lab", "live_room", "work_area",
+  "discussion_pod", "elevator_lobby", "stairwell", "pantry",
+]);
+const optionalNumberedSpaceTypes = new Set(["pantry"]);
 const elevatorDirectionNumbers = ["东", "南", "西", "北"];
 
 function setStatus(text) {
@@ -558,6 +595,7 @@ function scaleExistingGeometry(sx, sy) {
     segment.width *= (sx + sy) / 2;
   });
   state.spaces.forEach((space) => scalePoint(space.point));
+  state.spaceEquivalentPoints.forEach((point) => scalePoint(point.point));
   state.signs.forEach((sign) => scalePoint(sign.point));
   (state.scaleCalibration.samples || []).forEach((sample) => {
     scalePoint(sample.a);
@@ -778,11 +816,8 @@ function applyPointSnaps(raw, from = null, excludeSegmentId = null, forceAngle =
     state.snapPoint = hitNode;
     return hitNode;
   }
-  const hitSegment = nearestSegmentSnap(point, 14, excludeSegmentId);
-  if (hitSegment) {
-    state.snapPoint = hitSegment;
-    return hitSegment;
-  }
+  // Intersections are more precise construction targets than an arbitrary
+  // projection onto a segment, so they must win before ordinary line snaps.
   const hitExistingExtensions = nearestExistingExtensionIntersection(point, 18, excludeSegmentId);
   if (hitExistingExtensions) {
     state.guides.push(...hitExistingExtensions.guides);
@@ -799,6 +834,11 @@ function applyPointSnaps(raw, from = null, excludeSegmentId = null, forceAngle =
     state.guides.push(...hitExtension.guides);
     state.snapPoint = hitExtension.point;
     return hitExtension.point;
+  }
+  const hitSegment = nearestSegmentSnap(point, 14, excludeSegmentId);
+  if (hitSegment) {
+    state.snapPoint = hitSegment;
+    return hitSegment;
   }
   state.snapPoint = null;
   return point;
@@ -1414,6 +1454,7 @@ function clearComputedTestPaths() {
   state.test.routeResults = [];
   state.test.activeRouteId = "";
   state.test.focusedRouteId = "";
+  state.test.selectedResultRouteIds = [];
   clearSimulationResults();
 }
 
@@ -1522,6 +1563,7 @@ function renderScaleReferenceList() {
 function commitScaleReference(meters) {
   const pending = state.scaleCalibration.pendingLine;
   if (!pending || !Number.isFinite(Number(meters)) || Number(meters) <= 0) return false;
+  const hadScale = Boolean(pixelsPerMeter());
   recordDrawingChange("scale");
   state.scaleCalibration.samples.push({
     id: `scale-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -1529,6 +1571,7 @@ function commitScaleReference(meters) {
     a: clonePoint(pending.a),
     b: clonePoint(pending.b),
   });
+  if (!hadScale) applyScaledPersonDefaults();
   state.scaleCalibration.pendingLine = null;
   state.scaleCalibration.drawingEnabled = state.scaleCalibration.mode === "custom";
   hideCanvasInlineEditors();
@@ -1539,6 +1582,14 @@ function commitScaleReference(meters) {
   updateStatus();
   redraw();
   return true;
+}
+
+function applyScaledPersonDefaults() {
+  const ratio = pixelsPerMeter();
+  if (!ratio) return;
+  state.test.person.visionDistance = 5 * ratio;
+  state.test.person.normalAngle = 120;
+  state.test.person.decisionAngle = 240;
 }
 
 function syncScaleControls() {
@@ -1963,7 +2014,7 @@ function routeAnchorForSignReturn(observerPoint, signPoint, heading, preferredSe
 }
 
 function insertSignReadNode(nodes, graph, sign, returnAnchor = null) {
-  const routeAnchor = returnAnchor || nearestRouteCenter(sign.point);
+  const routeAnchor = returnAnchor || signRouteAnchor(sign);
   if (!routeAnchor) return "";
   const routeKey = insertGraphAnchor(nodes, graph, routeAnchor);
   const signKey = addGraphPoint(nodes, sign.point);
@@ -2154,15 +2205,21 @@ function destinationFaceForSign(sign, endSpace) {
 }
 
 function signReadHeading(sign, fallbackHeading = 0, face = "front") {
-  const routeAnchor = nearestRouteCenter(sign.point);
   if (sign.installType === "hanging") return hangingFaceReadHeading(sign, face);
+  // Wall, film and standing signs keep their own panel orientation. This is
+  // especially important for paired signs: the effective sign, not the sign
+  // that first entered view, defines the person's stable reading heading.
+  if (["wall", "film", "standing"].includes(sign.installType) && Number.isFinite(sign.angle)) {
+    return sign.angle + Math.PI;
+  }
+  const routeAnchor = signRouteAnchor(sign);
   if (routeAnchor && distance(routeAnchor.point, sign.point) > 2) {
     return directionTo(routeAnchor.point, sign.point);
   }
   return fallbackHeading;
 }
 
-function signPairRouteAnchor(sign) {
+function signRouteAnchor(sign) {
   const preferredSegment = segmentById(sign?.segmentId);
   if (preferredSegment) {
     const projected = nearestPointOnSegment(sign.point, preferredSegment.a, preferredSegment.b);
@@ -2171,13 +2228,31 @@ function signPairRouteAnchor(sign) {
   return nearestRouteCenter(sign?.point);
 }
 
+function signPairRouteAnchor(sign) {
+  return signRouteAnchor(sign);
+}
+
 function signPanelReadHeading(sign) {
-  const routeAnchor = signPairRouteAnchor(sign);
+  const routeAnchor = signRouteAnchor(sign);
   if (sign?.installType === "hanging") return hangingFaceReadHeading(sign, "front");
   if (routeAnchor && distance(routeAnchor.point, sign.point) > 1) {
     return directionTo(routeAnchor.point, sign.point);
   }
   return sign?.angle || 0;
+}
+
+function segmentsBelongToSameRoute(leftSegment, rightSegment, leftAnchor, rightAnchor) {
+  if (!leftSegment || !rightSegment || !leftAnchor || !rightAnchor) return false;
+  if (leftSegment.id === rightSegment.id) return true;
+  const leftHeading = directionTo(leftSegment.a, leftSegment.b);
+  const rightHeading = directionTo(rightSegment.a, rightSegment.b);
+  const axisDifference = Math.min(
+    angleDifference(leftHeading, rightHeading),
+    Math.abs(Math.PI - angleDifference(leftHeading, rightHeading)),
+  );
+  if (axisDifference > Math.PI / 12) return false;
+  const routeWidth = Math.max(leftSegment.width || 0, rightSegment.width || 0, 1);
+  return distance(leftAnchor.point, rightAnchor.point) < routeWidth * 2;
 }
 
 function pairedSignFor(sign) {
@@ -2191,14 +2266,23 @@ function pairedSignFor(sign) {
       sign: candidate,
       routeAnchor: signPairRouteAnchor(candidate),
     }))
-    .filter(({ routeAnchor: candidateAnchor }) => candidateAnchor?.segmentId === routeAnchor.segmentId)
-    .map(({ sign: candidate }) => ({
+    .map(({ sign: candidate, routeAnchor: candidateAnchor }) => ({
       sign: candidate,
+      routeAnchor: candidateAnchor,
+      segment: candidateAnchor ? segmentById(candidateAnchor.segmentId) : null,
       distance: distance(sign.point, candidate.point),
-      oppositeScore: Math.abs(Math.PI - angleDifference(facing, signPanelReadHeading(candidate))),
+      facingDifference: angleDifference(facing, signPanelReadHeading(candidate)),
     }))
-    .filter((candidate) => candidate.distance < segment.width * 2 && candidate.oppositeScore <= Math.PI / 6)
-    .sort((a, b) => a.distance - b.distance || a.oppositeScore - b.oppositeScore)[0]?.sign || null;
+    .filter((candidate) => segmentsBelongToSameRoute(segment, candidate.segment, routeAnchor, candidate.routeAnchor))
+    .filter((candidate) => {
+      const routeWidth = Math.max(segment.width || 0, candidate.segment?.width || 0, 1);
+      const parallelScore = Math.min(
+        candidate.facingDifference,
+        Math.abs(Math.PI - candidate.facingDifference),
+      );
+      return candidate.distance < routeWidth * 2 && parallelScore <= Math.PI / 6;
+    })
+    .sort((a, b) => a.distance - b.distance || a.facingDifference - b.facingDifference)[0]?.sign || null;
 }
 
 function signInspectionContext(sign, endSpace) {
@@ -2208,10 +2292,18 @@ function signInspectionContext(sign, endSpace) {
   const effectiveSign = matchedSign || sign;
   return {
     detectedSign: sign,
+    // The first visible sign only triggers the grouped inspection. Once the
+    // destination is matched, this sign exclusively defines the stable point,
+    // reading heading and subsequent direction decision.
+    decisionSign: matchedSign || null,
     effectiveSign,
     signs,
     hasEffectiveInformation: Boolean(matchedSign),
   };
+}
+
+function decisionSignForInspection(context) {
+  return context.decisionSign || context.effectiveSign || context.detectedSign;
 }
 
 function signInspectionGroupLabel(context) {
@@ -2223,7 +2315,7 @@ function signInspectionGroupLabel(context) {
 function groupedSignDiscoveryText(context) {
   if (context.signs.length === 1) return `发现${signNumberLabel(context.detectedSign)}并走近查看`;
   if (context.hasEffectiveInformation) {
-    return `发现${signInspectionGroupLabel(context)}，同时读取两个标识的信息，并走向含有有效信息的${signNumberLabel(context.effectiveSign)}`;
+    return `发现${signInspectionGroupLabel(context)}，同时读取两个标识的信息，并转向含有有效信息的${signNumberLabel(decisionSignForInspection(context))}`;
   }
   return `发现${signInspectionGroupLabel(context)}，同时读取两个标识的信息`;
 }
@@ -2237,7 +2329,19 @@ function equivalentDestinationSpaces(endSpace) {
   const name = normalizedSpaceName(endSpace);
   if (!name) return [endSpace];
   const matches = state.spaces.filter((space) => normalizedSpaceName(space) === name);
-  return matches.length ? matches : [endSpace];
+  const regularSpaces = matches.length ? matches : [endSpace];
+  const sourceIds = new Set(regularSpaces.map((space) => space.id));
+  const equivalentPoints = state.spaceEquivalentPoints
+    .filter((point) => sourceIds.has(point.spaceId))
+    .map((point) => ({
+      ...endSpace,
+      id: `equivalent-${point.id}`,
+      point: point.point,
+      segmentId: point.segmentId,
+      sourceSpaceId: point.spaceId,
+      isEquivalentPoint: true,
+    }));
+  return [...regularSpaces, ...equivalentPoints];
 }
 
 function calculatePathToSingleDestination(startPoint, endSpace) {
@@ -2261,10 +2365,9 @@ function calculatePathToSingleDestination(startPoint, endSpace) {
 }
 
 function calculateOptimalPath(startPoint, endSpace) {
-  return equivalentDestinationSpaces(endSpace)
-    .map((space) => calculatePathToSingleDestination(startPoint, space))
-    .filter(Boolean)
-    .sort((a, b) => pathLength(a.path) - pathLength(b.path))[0] || null;
+  // PRD and failure thresholds must always use the selected formal destination
+  // as their baseline. Equivalent points remain simulation success targets only.
+  return calculatePathToSingleDestination(startPoint, endSpace);
 }
 
 function routeStartPrefix(startIndex) {
@@ -2332,6 +2435,8 @@ function computeOptimalPath(options = {}) {
     };
   });
   state.test.routeResults = results;
+  state.test.selectedResultRouteIds = [];
+  state.test.focusedRouteId = "";
   const first = results[0];
   syncActiveRouteResult(first);
   clearSimulationResults();
@@ -2383,6 +2488,20 @@ function signMatchesDestination(sign, endSpace) {
   const text = `${sign.text || ""} ${sign.customText || ""}`.trim();
   const equivalentIds = new Set(equivalentDestinationSpaces(endSpace).map((space) => space.id));
   return equivalentIds.has(sign.targetSpaceId) || Boolean(text && (text.includes(endSpace.name) || endSpace.name.includes(text)));
+}
+
+function nearbyInvalidSignIgnoreDistance(sign) {
+  const scale = pixelsPerMeter();
+  if (scale) return scale * 3;
+  const anchor = signRouteAnchor(sign);
+  const routeWidth = segmentById(anchor?.segmentId)?.width || defaultWidths.secondary;
+  return Math.max(120, routeWidth * 3);
+}
+
+function shouldIgnoreNearbyInvalidSign(sign, endSpace, navigationState = null) {
+  const validSignPoint = navigationState?.lastValidSignPoint;
+  if (!sign || !validSignPoint || signMatchesDestination(sign, endSpace)) return false;
+  return distance(validSignPoint, sign.point) <= nearbyInvalidSignIgnoreDistance(sign);
 }
 
 function visibleDestinationSigns(point, heading, angleDeg, endSpace) {
@@ -2534,18 +2653,23 @@ function signInfoText(sign, endSpace = null, face = "front") {
 }
 
 function recordVisibleSign(sign, point, prefix = "", endSpace = null, face = "front") {
-  if (!sign) return;
-  if (endSpace && !signMatchesDestination(sign, endSpace)) return;
+  if (!sign) return null;
+  if (endSpace && !signMatchesDestination(sign, endSpace)) return null;
   const action = signActionForDestination(sign, endSpace, face);
   const eventKey = `${sign.id || prefix}|${face}|${action}|${endSpace?.id || ""}`;
-  if (state.test.infoEvents.some((event) => event.signId === sign.id || event.key === eventKey)) return;
-  state.test.infoEvents.push({
+  const existing = state.test.infoEvents.find((event) => event.signId === sign.id || event.key === eventKey);
+  if (existing) return existing;
+  const event = {
     key: eventKey,
     point: clonePoint(point),
     action,
     label: panelActionLabel(action),
     signId: sign.id || "",
-  });
+    face,
+    valid: true,
+  };
+  state.test.infoEvents.push(event);
+  return event;
 }
 
 function recordSignInspection(sign, point, arrivalHeading, endSpace = null) {
@@ -2554,7 +2678,8 @@ function recordSignInspection(sign, point, arrivalHeading, endSpace = null) {
   const face = destinationFaceForSign(sign, endSpace);
   if (endSpace && face && signMatchesDestination(sign, endSpace)) {
     const readHeading = signReadHeading(sign, arrivalHeading, face);
-    recordVisibleSign(sign, point, "inspect", endSpace, face);
+    const event = recordVisibleSign(sign, point, "inspect", endSpace, face);
+    if (event) Object.assign(event, { readHeading, arrivalHeading, face, valid: true });
     return guidanceForSign(sign, readHeading, endSpace, face, arrivalHeading);
   }
   const eventKey = `${sign.id || "sign"}|no-target|${endSpace?.id || ""}`;
@@ -2565,16 +2690,27 @@ function recordSignInspection(sign, point, arrivalHeading, endSpace = null) {
       action: "noInfo",
       label: "无目前信息",
       signId: sign.id || "",
+      readHeading: signReadHeading(sign, arrivalHeading, "front"),
+      arrivalHeading,
+      face: "front",
+      valid: false,
     });
   }
   return null;
 }
 
 function recordGroupedSignInspection(context, arrivalHeading, endSpace = null) {
+  if (context.hasEffectiveInformation) {
+    context.signs.forEach((sign) => {
+      if (sign.id && !state.test.readSignIds.includes(sign.id)) state.test.readSignIds.push(sign.id);
+    });
+    const decisionSign = decisionSignForInspection(context);
+    return recordSignInspection(decisionSign, decisionSign.point, arrivalHeading, endSpace);
+  }
   let effectiveGuidance = null;
   context.signs.forEach((sign) => {
     const guidance = recordSignInspection(sign, sign.point, arrivalHeading, endSpace);
-    if (sign.id === context.effectiveSign.id) effectiveGuidance = guidance;
+    if (sign.id === decisionSignForInspection(context).id) effectiveGuidance = guidance;
   });
   return effectiveGuidance;
 }
@@ -2584,12 +2720,23 @@ function updateNavigationAfterSignInspection(navigationState, guidance, arrivalH
     navigationState.hasFollowedGuidance = true;
     navigationState.returningFromInvalidSign = false;
     navigationState.preInvalidSignHeading = null;
+    navigationState.lastValidSignPoint = clonePoint(guidance.sign.point);
+    navigationState.lastValidSignId = guidance.sign.id || "";
+    navigationState.lastValidGuidanceHeading = guidance.targetHeading;
     return;
   }
   if (navigationState.hasFollowedGuidance) {
     navigationState.returningFromInvalidSign = true;
     navigationState.preInvalidSignHeading = arrivalHeading;
   }
+}
+
+function isWithinRecentGuidancePriorityRange(point, navigationState = null) {
+  const signPoint = navigationState?.lastValidSignPoint;
+  if (!point || !signPoint || !Number.isFinite(navigationState?.lastValidGuidanceHeading)) return false;
+  const scale = pixelsPerMeter();
+  const limit = scale ? scale * 3 : 120;
+  return distance(point, signPoint) <= limit;
 }
 
 function hasRecordedSign(sign) {
@@ -2637,13 +2784,14 @@ function pathLength(points) {
   return points.slice(1).reduce((total, point, index) => total + distance(points[index], point), 0);
 }
 
-function firstSignAlongStep(from, to, endSpace) {
+function firstSignAlongStep(from, to, endSpace, navigationState = null) {
   const candidates = [];
   const stepHeading = directionTo(from, to);
   const stepLength = distance(from, to);
   const sampleCount = Math.max(1, Math.ceil(stepLength / 4));
   for (const sign of state.signs) {
     if (hasReadSign(sign)) continue;
+    if (shouldIgnoreNearbyInvalidSign(sign, endSpace, navigationState)) continue;
     const projected = nearestPointOnSegment(sign.point, from, to);
     if (projected.ratio < 0 || projected.ratio > 1) continue;
     if (projected.distance > state.test.person.visionDistance) continue;
@@ -2661,11 +2809,12 @@ function firstSignAlongStep(from, to, endSpace) {
   return candidates.sort((a, b) => a.ratio - b.ratio || a.distance - b.distance)[0] || null;
 }
 
-function firstPassedSignAlongStep(from, to) {
+function firstPassedSignAlongStep(from, to, endSpace = null, navigationState = null) {
   const candidates = [];
   for (const sign of state.signs) {
     if (hasReadSign(sign)) continue;
-    const routeAnchor = nearestRouteCenter(sign.point);
+    if (shouldIgnoreNearbyInvalidSign(sign, endSpace, navigationState)) continue;
+    const routeAnchor = signRouteAnchor(sign);
     if (!routeAnchor) continue;
     const projected = nearestPointOnSegment(routeAnchor.point, from, to);
     if (projected.ratio < -0.0001 || projected.ratio > 1.0001 || projected.distance > 1.5) continue;
@@ -2697,9 +2846,10 @@ function addPathPointsBeforeEvent(points, legIndex) {
   for (let index = 1; index <= legIndex; index += 1) addActualPathPoint(points[index]);
 }
 
-function firstVisibleUnreadDestinationSign(point, heading, angleDeg, endSpace) {
+function firstVisibleUnreadDestinationSign(point, heading, angleDeg, endSpace, navigationState = null) {
   return visibleSigns(point, heading, angleDeg)
     .filter((sign) => !hasReadSign(sign))
+    .filter((sign) => !shouldIgnoreNearbyInvalidSign(sign, endSpace, navigationState))
     .sort((a, b) => distance(point, a.point) - distance(point, b.point))[0] || null;
 }
 
@@ -2859,6 +3009,9 @@ function frontSideGuidedChoice(choices, current, guidance, endSpace) {
 
 function expandedDecisionChoices(currentKey, previousKey, nodes, graph, choices, visitedEdges) {
   const expanded = [];
+  const currentPoint = nodes.get(currentKey);
+  const previousPoint = nodes.get(previousKey);
+  const returnHeading = currentPoint && previousPoint ? directionTo(currentPoint, previousPoint) : null;
   for (const choice of choices) {
     const nextEdges = navigableGraphEdges(graph, choice.key);
     const shouldExpand = choice.weight < 18 && nextEdges.length > 2;
@@ -2876,6 +3029,8 @@ function expandedDecisionChoices(currentKey, previousKey, nodes, graph, choices,
         heading: directionTo(nodes.get(currentKey), nextPoint),
         visited: visitedEdges.has(edgeVisitKey(choice.key, nextEdge.key)),
         isBacktrack: nextEdge.key === previousKey,
+        isReturnDirection: Number.isFinite(returnHeading)
+          && angleDifference(returnHeading, directionTo(currentPoint, nextPoint)) <= Math.PI / 9,
         viaKey: choice.key,
         weight: choice.weight + nextEdge.weight,
         routeWidth: Math.max(choice.routeWidth || 0, nextEdge.routeWidth || 0),
@@ -2944,6 +3099,8 @@ function guidedJunctionLookaheadScore(choice, currentKey, nodes, graph, guidance
 
 function routeChoicesAt(currentKey, previousKey, nodes, graph, visitedEdges = new Set()) {
   const current = nodes.get(currentKey);
+  const previous = nodes.get(previousKey);
+  const returnHeading = current && previous ? directionTo(current, previous) : null;
   const rawChoices = Array.from(new Map(navigableGraphEdges(graph, currentKey)
     .map((edge) => ({
       ...edge,
@@ -2951,6 +3108,8 @@ function routeChoicesAt(currentKey, previousKey, nodes, graph, visitedEdges = ne
       heading: directionTo(current, nodes.get(edge.key)),
       visited: visitedEdges.has(edgeVisitKey(currentKey, edge.key)),
       isBacktrack: edge.key === previousKey,
+      isReturnDirection: Number.isFinite(returnHeading) && nodes.get(edge.key)
+        && angleDifference(returnHeading, directionTo(current, nodes.get(edge.key))) <= Math.PI / 9,
     }))
     .filter((choice) => choice.point)
     .map((choice) => [choice.key, choice])).values());
@@ -3059,11 +3218,14 @@ function chooseNextSimulationStep(
   const sequentialChoice = sequentialTurnChoice(choices, heading, guidance);
   if (sequentialChoice) return sequentialChoice;
   const forwardChoices = choices.filter((choice) => !choice.isBacktrack);
+  // An effective sign instruction always outranks automatic passage through
+  // an ordinary two-segment turn, regardless of the sign installation type.
+  const guidanceOverridesOrdinaryTurn = Boolean(guidance);
   if (!forwardChoices.length) {
     const backtrack = choices.find((choice) => choice.isBacktrack);
     return backtrack ? { ...backtrack, method: "backtrack" } : null;
   }
-  if (forwardChoices.length === 1) {
+  if (forwardChoices.length === 1 && !guidanceOverridesOrdinaryTurn) {
     return { ...forwardChoices[0], method: "only-route" };
   }
   if (choices.length === 2 && !guidance) {
@@ -3110,10 +3272,22 @@ function chooseNextSimulationStep(
   const unexplored = decisionChoices.filter((choice) => !choice.visited);
   if (isDecision && navigationState.hasFollowedGuidance) {
     const returnedFromInvalidSign = Boolean(navigationState.returningFromInvalidSign);
-    const continuationHeading = returnedFromInvalidSign
+    const recentGuidanceHasPriority = !returnedFromInvalidSign
+      && isWithinRecentGuidancePriorityRange(current, navigationState);
+    const continuationHeading = recentGuidanceHasPriority
+      ? navigationState.lastValidGuidanceHeading
+      : returnedFromInvalidSign
       ? navigationState.preInvalidSignHeading ?? heading
       : heading;
-    const continuation = (unexplored.length ? unexplored : decisionChoices)
+    const unvisitedNonReturn = unexplored.filter((choice) => !choice.isBacktrack && !choice.isReturnDirection);
+    const nonReturn = decisionChoices.filter((choice) => !choice.isBacktrack && !choice.isReturnDirection);
+    const continuationPool = recentGuidanceHasPriority && nonReturn.length
+      ? nonReturn
+      : unvisitedNonReturn.length
+      ? unvisitedNonReturn
+      : nonReturn.length ? nonReturn
+        : unexplored.length ? unexplored : decisionChoices;
+    const continuation = continuationPool
       .slice()
       .sort((a, b) => directionScore(continuationHeading, a.heading) - directionScore(continuationHeading, b.heading)
         || Number(a.visited) - Number(b.visited)
@@ -3123,7 +3297,11 @@ function chooseNextSimulationStep(
     navigationState.preInvalidSignHeading = null;
     return {
       ...continuation,
-      method: returnedFromInvalidSign ? "invalid-sign-return-straight" : "post-guidance-straight",
+      method: returnedFromInvalidSign
+        ? "invalid-sign-return-straight"
+        : recentGuidanceHasPriority
+          ? "recent-guidance-priority"
+          : "post-guidance-straight",
     };
   }
   if (isDecision && unexplored.length) {
@@ -3188,14 +3366,83 @@ function addSimulationLog(type, text, point = null) {
 function renderSimulationLog() {
   if (!simulationLogList || !simulationLogEmpty) return;
   const entries = state.test.simulationLog || [];
-  simulationLogEmpty.hidden = entries.length > 0;
+  const events = state.test.infoEvents || [];
+  const startEntry = entries.find((entry) => entry.type === "start");
+  const outcomeEntry = [...entries].reverse().find((entry) => entry.type === "success" || entry.type === "failure");
+  simulationLogEmpty.hidden = Boolean(startEntry || events.length || outcomeEntry);
   simulationLogList.innerHTML = "";
-  for (const entry of entries) {
+
+  const appendRecord = (number, type, text, point = null, substeps = []) => {
     const item = document.createElement("li");
-    item.dataset.logType = entry.type || "move";
-    item.textContent = `${entry.text}${entry.point ? ` · ${simulationPointText(entry.point)}` : ""}`;
+    item.dataset.logType = type;
+    item.dataset.stepNumber = String(number);
+    const summary = document.createElement("div");
+    summary.className = "simulationLogSummary";
+    summary.textContent = `${text}${point ? ` · ${simulationPointText(point)}` : ""}`;
+    item.appendChild(summary);
+    if (substeps.length) {
+      const details = document.createElement("ol");
+      details.className = "simulationReadSteps";
+      substeps.forEach((step) => {
+        const detail = document.createElement("li");
+        detail.textContent = step;
+        details.appendChild(detail);
+      });
+      item.appendChild(details);
+    }
     simulationLogList.appendChild(item);
+  };
+
+  if (startEntry) appendRecord(0, "start", startEntry.text, startEntry.point);
+
+  events.forEach((event, index) => {
+    const sign = state.signs.find((item) => item.id === event.signId);
+    const signLabel = sign ? signNumberLabel(sign) : "导向标识";
+    appendRecord(
+      index + 1,
+      event.action === "noInfo" ? "no-info" : "sign",
+      `${signLabel}：${simulationRecordLabel(event)}`,
+      event.point,
+      simulationReadProcessSteps(event, sign),
+    );
+  });
+
+  if (outcomeEntry) {
+    const outcome = document.createElement("li");
+    outcome.className = "simulationLogOutcome";
+    outcome.dataset.logType = outcomeEntry.type;
+    outcome.textContent = `结果：${outcomeEntry.text}${outcomeEntry.point ? ` · ${simulationPointText(outcomeEntry.point)}` : ""}`;
+    simulationLogList.appendChild(outcome);
   }
+}
+
+function simulationReadProcessSteps(event, sign) {
+  const signLabel = sign ? signNumberLabel(sign) : "导向标识";
+  const endSpace = spaceById(state.test.endSpaceId);
+  const destination = endSpace?.name || "当前目的地";
+  const heading = Number.isFinite(event.readHeading) ? `地图${directionLabel(event.readHeading)}方向` : "标识面板方向";
+  const face = sign?.installType === "hanging" ? (event.face === "back" ? "背面" : "正面") : "面板";
+  const action = simulationRecordLabel(event);
+  const steps = [
+    `视野扫过${signLabel}，发现标识并从当前行进位置走近查看。`,
+    `到达标识稳定点，面朝${heading}查看${face}。`,
+  ];
+  if (event.action === "noInfo") {
+    steps.push(`只查找与「${destination}」有关的内容，确认该标识没有当前目的地信息。`);
+    steps.push("该标识不产生方向决策；按规则返回发现标识时所在的动线，并恢复查看前的行进方向。");
+    return steps;
+  }
+  steps.push(`只读取与「${destination}」有关的内容，获得“${action}”指令。`);
+  if (event.action === "leftFront") {
+    steps.push("把“左上”拆成两段：先左拐，再在随后第一个可右拐的节点右拐并继续前进。");
+  } else if (event.action === "rightFront") {
+    steps.push("把“右上”拆成两段：先右拐，再在随后第一个可左拐的节点左拐并继续前进。");
+  } else if (event.action === "straight" && ["wall", "film"].includes(sign?.installType)) {
+    steps.push("信息界面不能穿行；沿界面两侧各检查 2 米，移动到可用出口交点后，保持读牌朝向继续向前。");
+  } else {
+    steps.push(`以面朝标识的方向为基准执行“${action}”，转入相应动线继续前进。`);
+  }
+  return steps;
 }
 
 function routeResultSummary(result) {
@@ -3205,6 +3452,165 @@ function routeResultSummary(result) {
     : "未设置");
   const endName = spaceById(result.endSpaceId)?.name || "未设置";
   return `起点：${startName}；终点：${endName}`;
+}
+
+let routeSummaryTooltip = null;
+
+function ensureRouteSummaryTooltip() {
+  if (routeSummaryTooltip) return routeSummaryTooltip;
+  routeSummaryTooltip = document.createElement("div");
+  routeSummaryTooltip.className = "routeSummaryTooltip";
+  routeSummaryTooltip.setAttribute("role", "tooltip");
+  routeSummaryTooltip.hidden = true;
+  document.body.appendChild(routeSummaryTooltip);
+  window.addEventListener("scroll", hideRouteSummaryTooltip, true);
+  window.addEventListener("resize", hideRouteSummaryTooltip);
+  return routeSummaryTooltip;
+}
+
+function showRouteSummaryTooltip(button) {
+  const content = button.dataset.routeSummary;
+  if (!content) return;
+  const tooltip = ensureRouteSummaryTooltip();
+  tooltip.textContent = content;
+  tooltip.hidden = false;
+  tooltip.style.left = "0px";
+  tooltip.style.top = "0px";
+
+  const buttonRect = button.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const edgeGap = 10;
+  const desiredLeft = buttonRect.left + buttonRect.width / 2 - tooltipRect.width / 2;
+  const left = Math.min(
+    window.innerWidth - tooltipRect.width - edgeGap,
+    Math.max(edgeGap, desiredLeft),
+  );
+  const spaceAbove = buttonRect.top - edgeGap;
+  const top = spaceAbove >= tooltipRect.height + 8
+    ? buttonRect.top - tooltipRect.height - 8
+    : Math.min(window.innerHeight - tooltipRect.height - edgeGap, buttonRect.bottom + 8);
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${Math.max(edgeGap, top)}px`;
+}
+
+function hideRouteSummaryTooltip() {
+  if (routeSummaryTooltip) routeSummaryTooltip.hidden = true;
+}
+
+function attachRouteSummaryTooltip(button) {
+  button.addEventListener("pointerenter", () => showRouteSummaryTooltip(button));
+  button.addEventListener("pointerleave", hideRouteSummaryTooltip);
+  button.addEventListener("focus", () => showRouteSummaryTooltip(button));
+  button.addEventListener("blur", hideRouteSummaryTooltip);
+  button.addEventListener("click", hideRouteSummaryTooltip);
+}
+
+function selectedResultIds() {
+  const validIds = new Set((state.test.routeResults || []).map((result) => result.id));
+  const selected = (state.test.selectedResultRouteIds || []).filter((id) => validIds.has(id));
+  state.test.selectedResultRouteIds = selected;
+  return selected;
+}
+
+function routePrd(result) {
+  const optimalDistance = Number(result?.optimalDistance);
+  const actualDistance = Number(result?.actualDistance);
+  if (!result?.simulated || !Number.isFinite(optimalDistance) || optimalDistance <= 0 || !Number.isFinite(actualDistance)) {
+    return null;
+  }
+  return actualDistance / optimalDistance;
+}
+
+function updatePrdMetric() {
+  if (!prdMeanValue || !effectivePrdMeanValue) return;
+  const selected = new Set(selectedResultIds());
+  const allResults = state.test.routeResults || [];
+  const scopedResults = selected.size
+    ? allResults.filter((result) => selected.has(result.id))
+    : allResults;
+  const meanText = (results) => {
+    const values = results.map(routePrd).filter((value) => Number.isFinite(value));
+    return values.length
+      ? (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)
+      : "--";
+  };
+  prdMeanValue.textContent = meanText(scopedResults);
+  effectivePrdMeanValue.textContent = meanText(scopedResults.filter((result) => result.success === true));
+  if (failureDistanceMultiplierInput) {
+    failureDistanceMultiplierInput.value = String(state.test.failureDistanceMultiplier || 5);
+  }
+  if (testedRouteCount) {
+    const testedCount = allResults.filter((result) => result.simulated).length;
+    testedRouteCount.textContent = `共测试 ${testedCount} 条路线`;
+  }
+}
+
+function renderDestinationFailureCounts() {
+  if (!destinationFailureList) return;
+  const expandedDestinations = new Set(state.test.expandedFailureDestinations || []);
+  const counts = new Map();
+  (state.test.routeResults || [])
+    .filter((result) => result.simulated && result.success === false)
+    .forEach((result) => {
+      const destinationName = spaceById(result.endSpaceId)?.name || "未命名目的地";
+      const routeMatch = String(result.id || "").match(/^route-\d+-(\d+)$/);
+      const destinationNumber = routeMatch?.[1]
+        || String((state.test.endSpaceIds || []).indexOf(result.endSpaceId) + 1);
+      const current = counts.get(destinationName) || { count: 0, destinationNumbers: new Set(), results: [] };
+      current.count += 1;
+      if (destinationNumber && destinationNumber !== "0") current.destinationNumbers.add(destinationNumber);
+      current.results.push(result);
+      counts.set(destinationName, current);
+    });
+
+  destinationFailureList.replaceChildren();
+  if (!counts.size) {
+    const empty = document.createElement("div");
+    empty.className = "placeholderText";
+    empty.textContent = "暂无寻找失败的目的地。";
+    destinationFailureList.appendChild(empty);
+    return;
+  }
+
+  [...counts.entries()]
+    .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0], "zh-CN"))
+    .forEach(([destinationName, summary]) => {
+      const row = document.createElement("div");
+      row.className = "destinationFailureItem";
+      const summaryButton = document.createElement("button");
+      summaryButton.type = "button";
+      summaryButton.className = "destinationFailureSummary";
+      summaryButton.innerHTML = `<span>${destinationName}</span><strong>${summary.count}次</strong>`;
+      const routes = document.createElement("div");
+      routes.className = "destinationFailureRoutes simulationRoutePicker";
+      routes.hidden = !expandedDestinations.has(destinationName);
+      summary.results.forEach((result) => {
+        const routeButton = document.createElement("button");
+        routeButton.type = "button";
+        routeButton.textContent = result.label;
+        routeButton.classList.add("failed");
+        routeButton.classList.toggle("active", selectedResultIds().includes(result.id));
+        routeButton.dataset.routeSummary = `${routeResultSummary(result)}\nPRD：${routePrd(result)?.toFixed(2) || "--"}`;
+        attachRouteSummaryTooltip(routeButton);
+        routeButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          state.test.selectedResultRouteIds = [result.id];
+          state.test.focusedRouteId = result.id;
+          syncActiveRouteResult(result);
+          updateSimulationPanels();
+          redraw();
+        });
+        routes.appendChild(routeButton);
+      });
+      summaryButton.addEventListener("click", () => {
+        if (expandedDestinations.has(destinationName)) expandedDestinations.delete(destinationName);
+        else expandedDestinations.add(destinationName);
+        state.test.expandedFailureDestinations = [...expandedDestinations];
+        routes.hidden = !expandedDestinations.has(destinationName);
+      });
+      row.append(summaryButton, routes);
+      destinationFailureList.appendChild(row);
+    });
 }
 
 function renderResultRoutePicker() {
@@ -3218,8 +3624,10 @@ function renderResultRoutePicker() {
   const allButton = document.createElement("button");
   allButton.type = "button";
   allButton.textContent = "全部";
-  allButton.classList.toggle("active", !state.test.focusedRouteId);
+  const selected = selectedResultIds();
+  allButton.classList.toggle("active", selected.length === 0);
   allButton.addEventListener("click", () => {
+    state.test.selectedResultRouteIds = [];
     state.test.focusedRouteId = "";
     updateSimulationPanels();
     redraw();
@@ -3231,13 +3639,26 @@ function renderResultRoutePicker() {
     button.type = "button";
     button.textContent = result.label;
     button.classList.toggle("failed", result.simulated && !result.success);
-    button.classList.toggle("active", result.id === state.test.focusedRouteId);
+    button.classList.toggle("active", selected.includes(result.id));
     const summary = routeResultSummary(result);
-    button.dataset.routeSummary = summary;
-    button.title = `${summary}；${result.success ? "寻路成功" : "寻路失败"}`;
-    button.addEventListener("click", () => {
-      state.test.focusedRouteId = result.id;
-      syncActiveRouteResult(result);
+    const prd = routePrd(result);
+    const prdText = prd === null ? "--" : prd.toFixed(2);
+    button.dataset.routeSummary = `${summary}\nPRD：${prdText}`;
+    attachRouteSummaryTooltip(button);
+    button.addEventListener("click", (event) => {
+      if (event.shiftKey) {
+        const next = new Set(selectedResultIds());
+        if (next.has(result.id)) next.delete(result.id);
+        else next.add(result.id);
+        state.test.selectedResultRouteIds = [...next];
+        const fallbackId = next.has(result.id) ? result.id : [...next].at(-1) || "";
+        state.test.focusedRouteId = fallbackId;
+        if (fallbackId) syncActiveRouteResult(results.find((item) => item.id === fallbackId));
+      } else {
+        state.test.selectedResultRouteIds = [result.id];
+        state.test.focusedRouteId = result.id;
+        syncActiveRouteResult(result);
+      }
       updateSimulationPanels();
       redraw();
     });
@@ -3271,7 +3692,8 @@ function simulationChoiceText(choice, heading) {
     "sign-exit-approach": `先沿信息界面移动到出口交点；到达后继续保留读牌朝向和“向前”指令`,
     "sign-approach": `保留刚才获得的导向信息，先向地图${direction}方向前往附近可执行该方向的动线交叉口`,
     straight: `没有新的有效标识，沿当前方向继续向地图${direction}方向直行`,
-    "post-guidance-straight": `此前已经依据有效标识行走；本决策点没有可读取的有效标识，保持当前行进方向，优先向地图${direction}方向继续直行`,
+    "post-guidance-straight": `此前已经依据有效标识完成转向；到达决策点后优先排除来路，并从尚未走过的分支中选择向地图${direction}方向继续行进`,
+    "recent-guidance-priority": `获得有效指令后在 3 米内到达决策点；继续保持指令形成的地图${direction}方向，该方向的优先级高于尚未走过的其他支路`,
     "invalid-sign-return-straight": `在决策点走近标识查看后确认没有当前目的地信息，已返回查看标识前的动线并恢复原朝向，优先向地图${direction}方向继续直行`,
     "only-route": `该节点只有两条相连线段，是普通转折点而不是决策点；直接从来路线段过渡到下一条线段，并向地图${direction}方向继续直行`,
     "initial-wide-trial": `首次到达由 3 条或以上动线相交形成的决策点，使用决策点视角检查后仍没有当前目的地的有效信息，优先选择最粗的主动线向地图${direction}方向试探`,
@@ -3302,6 +3724,8 @@ function updateSimulationPanels() {
   if (!simulationStatus || !feedbackSummary) return;
   renderSimulationLog();
   renderResultRoutePicker();
+  updatePrdMetric();
+  renderDestinationFailureCounts();
   const results = state.test.routeResults || [];
   if (results.length > 1 && results.some((result) => result.simulated)) {
     const focused = results.find((result) => result.id === state.test.focusedRouteId);
@@ -3309,21 +3733,17 @@ function updateSimulationPanels() {
       simulationStatus.textContent = `当前查看路线 ${focused.label}。`;
       if (!focused.success) {
         feedbackSummary.textContent = focused.problemPoints?.at(-1)?.reason || `路线 ${focused.label} 寻路失败。`;
-      } else if (focused.actualDistance > focused.optimalDistance * 1.5) {
-        feedbackSummary.textContent = `路线 ${focused.label} 寻路成功，但模拟距离明显长于最优距离，存在绕路。`;
       } else {
-        feedbackSummary.textContent = `路线 ${focused.label} 寻路成功，没有发现明显问题。`;
+        feedbackSummary.textContent = `路线 ${focused.label} 寻路成功。`;
       }
       return;
     }
-    const failed = results.filter((result) => !result.success).map((result) => result.label);
-    const detours = results
-      .filter((result) => result.success && result.actualDistance > result.optimalDistance * 1.5)
+    const failed = results
+      .filter((result) => result.simulated && result.success === false)
       .map((result) => result.label);
     simulationStatus.textContent = `已完成 ${results.length} 条路线模拟，点击路线编号查看对应记录。`;
     const messages = [];
     if (failed.length) messages.push(`寻路失败：${failed.join("、")}。`);
-    if (detours.length) messages.push(`绕路较多：${detours.join("、")}。`);
     feedbackSummary.replaceChildren();
     if (messages.length) {
       messages.forEach((message) => {
@@ -3333,7 +3753,7 @@ function updateSimulationPanels() {
         feedbackSummary.appendChild(line);
       });
     } else {
-      feedbackSummary.textContent = "全部路线寻路成功，未发现明显绕路问题。";
+      feedbackSummary.textContent = "全部路线寻路成功。";
     }
     return;
   }
@@ -3401,11 +3821,15 @@ function runSingleSimulation() {
     hasFollowedGuidance: false,
     returningFromInvalidSign: false,
     preInvalidSignHeading: null,
+    lastValidSignPoint: null,
+    lastValidSignId: "",
+    lastValidGuidanceHeading: null,
     decisionCount: 0,
   };
   const visitedEdges = new Set();
   const optimalDistance = Math.max(1, pathLength(state.test.optimalPath));
-  const maxActualDistance = optimalDistance * 5;
+  const failureMultiplier = Math.max(1, Number(state.test.failureDistanceMultiplier) || 5);
+  const maxActualDistance = optimalDistance * failureMultiplier;
   const maxSteps = Math.max(60, state.segments.length * 20);
   state.test.actualPath.push(clonePoint(nodes.get(currentKey)));
   const startSpace = state.test.startSpaceId ? spaceById(state.test.startSpaceId) : null;
@@ -3430,11 +3854,11 @@ function runSingleSimulation() {
       break;
     }
     if (!guidance) {
-      const visibleSign = firstVisibleUnreadDestinationSign(currentPointForView, heading, viewAngle, endSpace);
+      const visibleSign = firstVisibleUnreadDestinationSign(currentPointForView, heading, viewAngle, endSpace, navigationState);
       if (visibleSign) {
         const arrivalHeading = heading;
         const inspection = signInspectionContext(visibleSign, endSpace);
-        const stableSign = inspection.effectiveSign;
+        const stableSign = decisionSignForInspection(inspection);
         const returnAnchor = routeAnchorForSignReturn(currentPointForView, stableSign.point, arrivalHeading);
         addSimulationLog("sign", `视野内${groupedSignDiscoveryText(inspection)}`, currentPointForView);
         const stableKey = insertSignReadNode(nodes, graph, stableSign, returnAnchor) || currentKey;
@@ -3452,10 +3876,10 @@ function runSingleSimulation() {
         currentKey = stableKey || currentKey;
         heading = guidance?.readHeading ?? arrivalHeading;
         if (pathLength(state.test.actualPath) > maxActualDistance) {
-          addSimulationLog("failure", `累计模拟距离超过最优路径的 5 倍，仍未到达「${endSpace.name}」，寻路失败`, nodes.get(currentKey) || currentPointForView);
+          addSimulationLog("failure", `累计模拟距离超过最优路径的 ${failureMultiplier} 倍，仍未到达「${endSpace.name}」，寻路失败`, nodes.get(currentKey) || currentPointForView);
           state.test.problemPoints.push({
             point: clonePoint(nodes.get(currentKey) || currentPointForView),
-            reason: `模拟路线已经超过最优路线 5 倍，仍未到达「${endSpace.name}」，判定寻路失败。`,
+            reason: `模拟路线已经超过最优路线 ${failureMultiplier} 倍，仍未到达「${endSpace.name}」，判定寻路失败。`,
           });
           break;
         }
@@ -3516,7 +3940,10 @@ function runSingleSimulation() {
           ? { ...choice, heading: directionTo(viaPoint, nextPoint) }
           : choice;
         const completed = completeOrAdvanceGuidance(guidance, resolvedChoice);
-        if (completed) guidance = null;
+        if (completed) {
+          navigationState.lastValidGuidanceHeading = resolvedChoice.heading;
+          guidance = null;
+        }
         else {
           const nextTurn = guidance.action === "left" ? "左拐" : "右拐";
           addSimulationLog(
@@ -3529,12 +3956,20 @@ function runSingleSimulation() {
     }
     const encountered = firstEventAlongPath(
       movementPoints,
-      (from, to) => firstSignAlongStep(from, to, endSpace),
+      (from, to) => firstSignAlongStep(from, to, endSpace, navigationState),
     );
     if (encountered) {
       const arrivalHeading = directionTo(movementPoints[encountered.legIndex], movementPoints[encountered.legIndex + 1]);
       const inspection = signInspectionContext(encountered.sign, endSpace);
-      const stableSign = inspection.effectiveSign;
+      if (guidance && !inspection.hasEffectiveInformation) {
+        recordGroupedSignInspection(inspection, arrivalHeading, endSpace);
+        addSimulationLog(
+          "sign",
+          `${signInspectionGroupLabel(inspection)}没有当前目的地信息，忽略该标识并继续执行此前的「${panelActionLabel(guidance.action)}」指令`,
+          encountered.point,
+        );
+      } else {
+      const stableSign = decisionSignForInspection(inspection);
       const returnAnchor = routeAnchorForSignReturn(
         encountered.point,
         stableSign.point,
@@ -3560,24 +3995,36 @@ function runSingleSimulation() {
         currentKey = stableKey;
         heading = guidance?.readHeading ?? arrivalHeading;
         if (pathLength(state.test.actualPath) > maxActualDistance) {
-          addSimulationLog("failure", `累计模拟距离超过最优路径的 5 倍，仍未到达「${endSpace.name}」，寻路失败`, stablePoint);
+          addSimulationLog("failure", `累计模拟距离超过最优路径的 ${failureMultiplier} 倍，仍未到达「${endSpace.name}」，寻路失败`, stablePoint);
           state.test.problemPoints.push({
             point: clonePoint(stablePoint),
-            reason: `模拟路线已经超过最优路线 5 倍，仍未到达「${endSpace.name}」，判定寻路失败。`,
+            reason: `模拟路线已经超过最优路线 ${failureMultiplier} 倍，仍未到达「${endSpace.name}」，判定寻路失败。`,
           });
           break;
         }
         continue;
       }
+      }
     }
-    const passedSign = firstEventAlongPath(movementPoints, firstPassedSignAlongStep);
+    const passedSign = firstEventAlongPath(
+      movementPoints,
+      (from, to) => firstPassedSignAlongStep(from, to, endSpace, navigationState),
+    );
     if (passedSign) {
       const movementHeading = directionTo(
         movementPoints[passedSign.legIndex],
         movementPoints[passedSign.legIndex + 1],
       );
       const inspection = signInspectionContext(passedSign.sign, endSpace);
-      const stableSign = inspection.effectiveSign;
+      if (guidance && !inspection.hasEffectiveInformation) {
+        recordGroupedSignInspection(inspection, movementHeading, endSpace);
+        addSimulationLog(
+          "sign",
+          `经过${signInspectionGroupLabel(inspection)}，但没有当前目的地信息；忽略该标识并继续执行此前的「${panelActionLabel(guidance.action)}」指令`,
+          passedSign.point,
+        );
+      } else {
+      const stableSign = decisionSignForInspection(inspection);
       const returnAnchor = routeAnchorForSignReturn(
         passedSign.point,
         stableSign.point,
@@ -3593,7 +4040,7 @@ function runSingleSimulation() {
         addActualPathPoint(stableSign.point);
       }
       guidance = recordGroupedSignInspection(inspection, movementHeading, endSpace);
-      if (guidance && passedKey && inspection.signs.length > 1) {
+      if (guidance && passedKey) {
         connectGuidedRouteFromSign(nodes, graph, passedKey, stableSign, guidance, returnAnchor);
       }
       updateNavigationAfterSignInspection(navigationState, guidance, movementHeading);
@@ -3608,6 +4055,7 @@ function runSingleSimulation() {
         currentKey = passedKey;
         heading = guidance?.readHeading ?? movementHeading;
         continue;
+      }
       }
     }
     if (viaPoint) addActualPathPoint(viaPoint);
@@ -3629,10 +4077,10 @@ function runSingleSimulation() {
       break;
     }
     if (pathLength(state.test.actualPath) > maxActualDistance) {
-      addSimulationLog("failure", `累计模拟距离超过最优路径的 5 倍，仍未到达「${endSpace.name}」，寻路失败`, nodes.get(currentKey));
+      addSimulationLog("failure", `累计模拟距离超过最优路径的 ${failureMultiplier} 倍，仍未到达「${endSpace.name}」，寻路失败`, nodes.get(currentKey));
       state.test.problemPoints.push({
         point: clonePoint(nodes.get(currentKey)),
-        reason: `模拟路线已经超过最优路线 5 倍，仍未到达「${endSpace.name}」，判定寻路失败。`,
+        reason: `模拟路线已经超过最优路线 ${failureMultiplier} 倍，仍未到达「${endSpace.name}」，判定寻路失败。`,
       });
       break;
     }
@@ -3703,6 +4151,8 @@ function runSimulation() {
   state.test.startSpaceIds = startSpaceIds;
   state.test.endSpaceIds = endSpaceIds;
   state.test.routeResults = results;
+  state.test.selectedResultRouteIds = [];
+  state.test.focusedRouteId = "";
   syncActiveRouteResult(results[0]);
   updateSimulationPanels();
   updateStatus();
@@ -3741,6 +4191,19 @@ function hitTestSpace(point, threshold = 14) {
     const d = distance(point, space.point);
     if (d < bestDistance) {
       best = space;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+function hitTestEquivalentSpacePoint(point, threshold = 14) {
+  let best = null;
+  let bestDistance = threshold;
+  for (const equivalentPoint of state.spaceEquivalentPoints) {
+    const d = distance(point, equivalentPoint.point);
+    if (d < bestDistance) {
+      best = equivalentPoint;
       bestDistance = d;
     }
   }
@@ -3911,6 +4374,40 @@ function drawSpaceInfo() {
       const width = ctx.measureText(label).width + 14;
       const x = space.point.x + 12;
       const y = space.point.y - 26;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+      ctx.strokeStyle = selected ? "#111111" : colors.info;
+      ctx.beginPath();
+      ctx.roundRect(x, y, width, 24, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#1f2528";
+      ctx.fillText(label, x + 7, y + 16);
+    }
+    ctx.restore();
+  }
+  for (const equivalentPoint of state.spaceEquivalentPoints) {
+    const source = state.spaces.find((space) => space.id === equivalentPoint.spaceId);
+    if (!source) continue;
+    const selected = equivalentPoint.id === state.selectedEquivalentPointId;
+    const hovered = equivalentPoint.id === state.hoverEquivalentPointId;
+    const shouldShowLabel = selected || hovered || showSpaceLabelsInput.checked;
+    ctx.save();
+    ctx.fillStyle = selected ? "#facc15" : "#ffffff";
+    ctx.strokeStyle = selected ? "#111111" : colors.info;
+    ctx.lineWidth = visualSize(2);
+    ctx.setLineDash([visualSize(3), visualSize(3)]);
+    ctx.beginPath();
+    ctx.arc(equivalentPoint.point.x, equivalentPoint.point.y, visualSize(selected ? 8 : 6), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (shouldShowLabel) {
+      const label = source.name || "未命名";
+      ctx.font = canvasFont(13);
+      const width = ctx.measureText(label).width + 14;
+      const x = equivalentPoint.point.x + 12;
+      const y = equivalentPoint.point.y - 26;
       ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
       ctx.strokeStyle = selected ? "#111111" : colors.info;
       ctx.beginPath();
@@ -4458,10 +4955,10 @@ function spaceTypeLabel(type) {
 }
 
 function numberForIndex(type, index) {
-  if (["meeting_room", "training_room"].includes(type)) return String(index).padStart(2, "0");
+  if (["meeting_room", "training_room", "lab"].includes(type)) return String(index).padStart(2, "0");
   if (["work_area", "discussion_pod"].includes(type)) return lettersForIndex(index);
-  if (type === "lab") return `L${String(index).padStart(2, "0")}`;
-  if (type === "elevator_lobby") return `${index}#`;
+  if (type === "live_room") return `L${String(index).padStart(2, "0")}`;
+  if (["elevator_lobby", "stairwell", "pantry"].includes(type)) return `${index}#`;
   return "";
 }
 
@@ -4469,6 +4966,10 @@ function indexFromNumber(type, number) {
   const value = String(number || "").trim();
   if (!value) return 0;
   if (["meeting_room", "training_room"].includes(type)) return /^\d+$/.test(value) ? Number(value) : 0;
+  if (type === "lab") {
+    const match = value.match(/^L?(\d+)$/i);
+    return match ? Number(match[1]) : 0;
+  }
   if (["work_area", "discussion_pod"].includes(type)) {
     if (!/^[A-Z]+$/i.test(value)) return 0;
     return value
@@ -4476,11 +4977,11 @@ function indexFromNumber(type, number) {
       .split("")
       .reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0);
   }
-  if (type === "lab") {
+  if (type === "live_room") {
     const match = value.match(/^L(\d+)$/i);
     return match ? Number(match[1]) : 0;
   }
-  if (type === "elevator_lobby") {
+  if (["elevator_lobby", "stairwell", "pantry"].includes(type)) {
     const match = value.match(/^(\d+)#$/);
     return match ? Number(match[1]) : 0;
   }
@@ -4508,15 +5009,18 @@ function nextSpaceNumber(type) {
 
 function resolveSpaceNumber(type, requested, excludeId = null) {
   if (!numberedSpaceTypes.has(type)) return "";
+  if (optionalNumberedSpaceTypes.has(type)) return requested || "";
   return requested || nextSpaceNumber(type);
 }
 
 function populateSpaceNumbers(type, selected = "") {
-  const current = selected || nextSpaceNumber(type);
+  const current = selected || (optionalNumberedSpaceTypes.has(type) ? "" : nextSpaceNumber(type));
   spaceNumberInput.innerHTML = "";
   const auto = document.createElement("option");
   auto.value = "";
-  auto.textContent = numberedSpaceTypes.has(type) ? "自动编号" : "无编号";
+  auto.textContent = optionalNumberedSpaceTypes.has(type)
+    ? "无编号（默认）"
+    : numberedSpaceTypes.has(type) ? "自动编号" : "无编号";
   spaceNumberInput.appendChild(auto);
 
   if (numberedSpaceTypes.has(type)) {
@@ -4550,6 +5054,25 @@ function composeSpaceName(type, number, customName = "") {
 
 function selectedSpace() {
   return state.spaces.find((space) => space.id === state.selectedSpaceId) ?? null;
+}
+
+function spaceShownInFields() {
+  const type = spaceTypeInput.value || "elevator_lobby";
+  const number = numberedSpaceTypes.has(type) ? spaceNumberInput.value : "";
+  const customName = spaceNameInput.value.trim();
+  const name = composeSpaceName(type, number, customName);
+  const selected = selectedSpace();
+  if (selected
+    && selected.type === type
+    && (selected.number || "") === number
+    && (selected.customName || "") === customName) {
+    return selected;
+  }
+  return state.spaces.find((space) => space.type === type
+    && (space.number || "") === number
+    && (space.customName || "") === customName)
+    || state.spaces.find((space) => space.name === name)
+    || null;
 }
 
 function syncSpaceFields() {
@@ -4669,6 +5192,7 @@ function finishCurrentLine() {
   state.snapPoint = null;
   state.guides = [];
   state.selectedSpaceId = null;
+  state.selectedEquivalentPointId = null;
   state.selectedSignId = null;
   hideCanvasInlineEditors();
   syncScaleControls();
@@ -4826,6 +5350,7 @@ async function serializeProject() {
     scaleCalibration: structuredClone(state.scaleCalibration),
     segments: state.segments,
     spaces: state.spaces,
+    spaceEquivalentPoints: state.spaceEquivalentPoints,
     signs,
     test: state.test,
     layers: state.layers,
@@ -4860,6 +5385,7 @@ function restoreProject(project) {
   };
   state.segments = structuredClone(project.segments || []);
   state.spaces = structuredClone(project.spaces || []);
+  state.spaceEquivalentPoints = structuredClone(project.spaceEquivalentPoints || []);
   state.signs = (project.signs || []).map((sign) => ({
     ...sign,
     panelAction: sign.panelAction || "straight",
@@ -4897,12 +5423,20 @@ function restoreProject(project) {
   state.test.routeResults = state.test.routeResults || [];
   state.test.activeRouteId = state.test.activeRouteId || "";
   state.test.focusedRouteId = state.test.focusedRouteId || "";
+  state.test.selectedResultRouteIds = Array.isArray(state.test.selectedResultRouteIds)
+    ? state.test.selectedResultRouteIds
+    : [];
   state.test.showPathLabels = state.test.showPathLabels !== false;
+  state.test.failureDistanceMultiplier = Math.max(1, Number(state.test.failureDistanceMultiplier) || 5);
+  state.test.expandedFailureDestinations = Array.isArray(state.test.expandedFailureDestinations)
+    ? state.test.expandedFailureDestinations
+    : [];
   state.test.useDefaultHeading = state.test.useDefaultHeading !== false;
   state.test.startHeading = Number.isFinite(Number(state.test.startHeading)) ? Number(state.test.startHeading) : 0;
   state.layers = { ...state.layers, ...(project.layers || {}) };
   state.selectedIds.clear();
   state.selectedSpaceId = null;
+  state.selectedEquivalentPointId = null;
   state.selectedSignId = null;
   state.currentStart = null;
   state.pointer = null;
@@ -4921,6 +5455,7 @@ function restoreProject(project) {
     input.checked = state.layers[key] !== false;
   });
   showSpaceLabelsInput.checked = Boolean(project.show?.spaceLabels);
+  addEquivalentSpacePointsInput.checked = false;
   showSignLabelsInput.checked = Boolean(project.show?.signLabels);
   showSignInfoLabelsInput.checked = Boolean(project.show?.signInfoLabels ?? project.show?.signPanels);
   showWidthLabelsInput.checked = project.show?.widthLabels !== false;
@@ -4983,7 +5518,7 @@ function addSpaceAt(point) {
   const type = spaceTypeInput.value || "elevator_lobby";
   const number = state.spaceNumberOverride
     ? resolveSpaceNumber(type, spaceNumberInput.value)
-    : nextSpaceNumber(type);
+    : resolveSpaceNumber(type, "");
   const customName = spaceNameInput.value;
   const name = composeSpaceName(type, number, customName);
   const space = {
@@ -4999,10 +5534,39 @@ function addSpaceAt(point) {
   recordDrawingChange("info");
   state.spaces.push(space);
   state.selectedSpaceId = space.id;
+  state.selectedEquivalentPointId = null;
   state.spaceNumberOverride = false;
   syncSpaceFields();
   refreshTestSpaceOptions();
   updateStatus();
+  redraw();
+}
+
+function addEquivalentSpacePointAt(point) {
+  const source = spaceShownInFields();
+  if (!source) {
+    const type = spaceTypeInput.value || "elevator_lobby";
+    const number = numberedSpaceTypes.has(type) ? spaceNumberInput.value : "";
+    const name = composeSpaceName(type, number, spaceNameInput.value);
+    setStatus(`还没有正式的「${name}」空间点，请先添加一个基础空间点。`);
+    return;
+  }
+  const snap = nearestInformationInterface(point);
+  if (!snap) {
+    setStatus("还没有可吸附的信息界面。请先调宽度并确认行走范围。");
+    return;
+  }
+  recordDrawingChange("info");
+  const equivalentPoint = {
+    id: `space-equivalent-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    spaceId: source.id,
+    point: clonePoint(snap.point),
+    segmentId: snap.segmentId,
+  };
+  state.spaceEquivalentPoints.push(equivalentPoint);
+  state.selectedEquivalentPointId = equivalentPoint.id;
+  clearComputedTestPaths();
+  setStatus(`已增加「${source.name}」的空间等效点。可继续点击添加。`);
   redraw();
 }
 
@@ -5100,6 +5664,10 @@ function removeSpacesById(ids) {
   const affectsTest = (state.test.startSpaceIds || []).some((id) => idSet.has(id))
     || (state.test.endSpaceIds || []).some((id) => idSet.has(id));
   state.spaces = state.spaces.filter((space) => !idSet.has(space.id));
+  state.spaceEquivalentPoints = state.spaceEquivalentPoints.filter((point) => !idSet.has(point.spaceId));
+  if (!state.spaceEquivalentPoints.some((point) => point.id === state.selectedEquivalentPointId)) {
+    state.selectedEquivalentPointId = null;
+  }
   state.test.startSpaceIds = (state.test.startSpaceIds || []).filter((id) => !idSet.has(id));
   state.test.endSpaceIds = (state.test.endSpaceIds || []).filter((id) => !idSet.has(id));
   if (idSet.has(state.test.startSpaceId)) {
@@ -5120,6 +5688,13 @@ function removeSpacesById(ids) {
   if (affectsTest) clearComputedTestPaths();
   refreshSignTargets();
   refreshTestSpaceOptions();
+}
+
+function removeEquivalentSpacePointsById(ids) {
+  const idSet = new Set(ids);
+  state.spaceEquivalentPoints = state.spaceEquivalentPoints.filter((point) => !idSet.has(point.id));
+  if (idSet.has(state.selectedEquivalentPointId)) state.selectedEquivalentPointId = null;
+  clearComputedTestPaths();
 }
 
 function selectedSign() {
@@ -5241,10 +5816,11 @@ function otherSpaceRank(space) {
   return {
     work_area: 1,
     elevator_lobby: 2,
-    pantry: 3,
-    restroom: 4,
-    male_restroom: 4,
-    female_restroom: 4,
+    stairwell: 3,
+    pantry: 4,
+    restroom: 5,
+    male_restroom: 5,
+    female_restroom: 5,
   }[space.type] || 9;
 }
 
@@ -5336,7 +5912,7 @@ function renderSignAssociationEditor() {
   }
   const selectedIds = new Set(destinations[action] || []);
   const groups = [
-    { key: "meeting", title: "会议室 / 培训室" },
+    { key: "meeting", title: "会议室 / 培训室 / 实验室" },
     { key: "discussion", title: "讨论舱" },
     { key: "other", title: "其他信息" },
   ];
@@ -5494,9 +6070,20 @@ function startDrag(event) {
   }
 
   if (state.tool === "info") {
+    const equivalentPoint = hitTestEquivalentSpacePoint(point);
+    if (equivalentPoint) {
+      state.selectedEquivalentPointId = equivalentPoint.id;
+      recordDrawingChange("info");
+      state.drag = { kind: "equivalent-space", equivalentPointId: equivalentPoint.id };
+      state.didDrag = false;
+      canvas.classList.add("dragging");
+      redraw();
+      return;
+    }
     const space = hitTestSpace(point);
     if (!space) return;
     state.selectedSpaceId = space.id;
+    state.selectedEquivalentPointId = null;
     syncSpaceFields();
     recordDrawingChange("info");
     state.drag = { kind: "space", spaceId: space.id };
@@ -5574,6 +6161,7 @@ function updateDrag(event) {
     state.pointer = point;
     state.hover = hitTest(point);
     state.hoverSpaceId = hitTestSpace(point)?.id ?? null;
+    state.hoverEquivalentPointId = hitTestEquivalentSpacePoint(point)?.id ?? null;
     state.hoverSignId = hitTestSign(point)?.id ?? null;
     if (state.tool === "scale" && state.currentStart) {
       state.pointer = scaleCalibrationPoint(point);
@@ -5649,6 +6237,17 @@ function updateDrag(event) {
       if ((state.test.startSpaceIds || []).includes(space.id) || (state.test.endSpaceIds || []).includes(space.id)) {
         clearComputedTestPaths();
       }
+      state.didDrag = true;
+    }
+  }
+
+  if (state.drag.kind === "equivalent-space") {
+    const equivalentPoint = state.spaceEquivalentPoints.find((item) => item.id === state.drag.equivalentPointId);
+    const snap = nearestInformationInterface(point);
+    if (equivalentPoint && snap) {
+      equivalentPoint.point = clonePoint(snap.point);
+      equivalentPoint.segmentId = snap.segmentId;
+      clearComputedTestPaths();
       state.didDrag = true;
     }
   }
@@ -5879,10 +6478,20 @@ canvas.addEventListener("click", (event) => {
       return;
     }
     const point = canvasPoint(event);
+    const equivalentPoint = hitTestEquivalentSpacePoint(point);
+    if (equivalentPoint) {
+      state.selectedEquivalentPointId = equivalentPoint.id;
+      updateStatus();
+      redraw();
+      return;
+    }
     const space = hitTestSpace(point);
     if (space) {
       state.selectedSpaceId = space.id;
+      state.selectedEquivalentPointId = null;
       syncSpaceFields();
+    } else if (addEquivalentSpacePointsInput.checked) {
+      addEquivalentSpacePointAt(point);
     } else {
       addSpaceAt(point);
     }
@@ -6107,9 +6716,21 @@ startHeadingButtons.forEach((button) => {
 clearTestPointsBtn.addEventListener("click", clearTestPoints);
 buildOptimalPathBtn.addEventListener("click", () => computeOptimalPath());
 runSimulationBtn.addEventListener("click", runSimulation);
+if (failureDistanceMultiplierInput && refreshSimulationResultsBtn) {
+  refreshSimulationResultsBtn.addEventListener("click", () => {
+    const previousValue = Math.max(1, Number(state.test.failureDistanceMultiplier) || 5);
+    const nextValue = Math.max(1, Number(failureDistanceMultiplierInput.value) || previousValue);
+    state.test.failureDistanceMultiplier = nextValue;
+    failureDistanceMultiplierInput.value = String(nextValue);
+    const hasSimulation = (state.test.routeResults || []).some((result) => result.simulated);
+    if (hasSimulation) runSimulation();
+    else updateSimulationPanels();
+  });
+}
 clearSimulationBtn.addEventListener("click", () => {
   clearSimulationResults();
   state.test.focusedRouteId = "";
+  state.test.selectedResultRouteIds = [];
   state.test.routeResults = (state.test.routeResults || []).map((result) => ({
     ...result,
     actualPath: [],
@@ -6243,7 +6864,9 @@ clearBtn.addEventListener("click", () => {
   if (state.tool === "info") {
     recordDrawingChange("info");
     removeSpacesById(state.spaces.map((space) => space.id));
+    state.spaceEquivalentPoints = [];
     state.selectedSpaceId = null;
+    state.selectedEquivalentPointId = null;
     updateStatus();
     redraw();
     return;
@@ -6301,6 +6924,21 @@ spaceNumberInput.addEventListener("change", () => {
   refreshTestSpaceOptions();
 });
 showSpaceLabelsInput.addEventListener("change", redraw);
+addEquivalentSpacePointsInput.addEventListener("change", () => {
+  if (addEquivalentSpacePointsInput.checked) {
+    const source = spaceShownInFields();
+    const type = spaceTypeInput.value || "elevator_lobby";
+    const number = numberedSpaceTypes.has(type) ? spaceNumberInput.value : "";
+    const name = source?.name || composeSpaceName(type, number, spaceNameInput.value);
+    setStatus(source
+      ? `正在增加「${name}」的空间等效点，可在信息界面上连续点击。`
+      : `当前显示「${name}」。请先添加一个正式空间点，之后即可直接增加它的等效点。`);
+  } else {
+    state.selectedEquivalentPointId = null;
+    setStatus("已退出空间等效点模式，继续按当前空间类型添加空间信息。");
+  }
+  redraw();
+});
 showSignLabelsInput.addEventListener("change", redraw);
 showSignInfoLabelsInput.addEventListener("change", redraw);
 showWidthLabelsInput.addEventListener("change", () => {
@@ -6359,8 +6997,14 @@ Object.entries(layerInputs).forEach(([key, input]) => {
 });
 
 deleteSpaceBtn.addEventListener("click", () => {
-  if (!state.selectedSpaceId) return;
+  if (!state.selectedSpaceId && !state.selectedEquivalentPointId) return;
   recordDrawingChange("info");
+  if (state.selectedEquivalentPointId) {
+    removeEquivalentSpacePointsById([state.selectedEquivalentPointId]);
+    updateStatus();
+    redraw();
+    return;
+  }
   removeSpacesById([state.selectedSpaceId]);
   state.selectedSpaceId = null;
   spaceNameInput.value = "";
@@ -6442,6 +7086,12 @@ exportBtn.addEventListener("click", () => {
       source: space.source,
       segmentId: space.segmentId,
       point: normalizePoint(space.point),
+    })),
+    spaceEquivalentPoints: state.spaceEquivalentPoints.map((point, index) => ({
+      id: `space-equivalent-${index + 1}`,
+      spaceId: point.spaceId,
+      segmentId: point.segmentId,
+      point: normalizePoint(point.point),
     })),
     signs: state.signs.map((sign, index) => ({
       id: `sign-${index + 1}`,

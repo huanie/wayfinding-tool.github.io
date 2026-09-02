@@ -133,12 +133,23 @@
                   <option value="female_restroom">女卫生间</option>
                   <option value="restroom">卫生间</option>
                   <option value="print_area">打印区</option>
-                  <option value="multifunction_room">多功能室</option>
+                  <option value="multifunction_room">开放协作区</option>
                   <option value="training_room">培训室</option>
                   <option value="lab">实验室</option>
+                  <option value="stairwell">楼梯间</option>
+                  <option value="live_room">直播间</option>
                   <option value="discussion_pod">讨论舱</option>
                   <option value="service_room">服务室</option>
                   <option value="phone">电话亭</option>
+                  <option value="small_post_office">小邮局</option>
+                  <option value="massage_room">按摩室</option>
+                  <option value="gym">健身房</option>
+                  <option value="restaurant">餐厅</option>
+                  <option value="exhibition_hall">展厅</option>
+                  <option value="admin_service_room">行政服务室</option>
+                  <option value="it_service_room">IT服务室</option>
+                  <option value="finance_service_room">财务服务室</option>
+                  <option value="hr_service_room">HR服务室</option>
                   <option value="other">其他</option>
                 </select>
                 <select id="spaceNumber">
@@ -146,6 +157,10 @@
                 </select>
                 <input id="spaceName" type="text" placeholder="自定义名称（可选）" />
               </div>
+              <label class="check compact">
+                <input id="addEquivalentSpacePoints" type="checkbox" />
+                <span>增加空间等效点</span>
+              </label>
               <label class="check compact">
                 <input id="showSpaceLabels" type="checkbox" />
                 <span>显示空间信息名称</span>
@@ -298,6 +313,33 @@
             </div>
             <button id="feedbackMode" type="button"><i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span>模拟结果</span></button>
             <div id="feedbackPanel" class="inlinePanel" hidden>
+              <div class="prdMetric" title="模拟路径长度除以最优路径长度">
+                <span>PRD均值</span>
+                <strong id="prdMeanValue">--</strong>
+              </div>
+              <div class="prdMetric" title="当前选择范围内寻路成功路线的PRD平均值">
+                <span>有效PRD均值</span>
+                <strong id="effectivePrdMeanValue">--</strong>
+              </div>
+              <p class="prdExplanation">
+                PRD（路径直达率，Pedestrian Route Directness）= 模拟路径距离 ÷ 最优路径距离。有效PRD均值仅统计寻路成功路线，用于判断导向标识是否能够有效指引。
+              </p>
+              <section class="panelSection simulationFailureRule">
+                <label for="failureDistanceMultiplier">寻路失败判断条件</label>
+                <div class="failureMultiplierControl">
+                  <span>超过最优路径</span>
+                  <input id="failureDistanceMultiplier" type="number" min="1" step="0.5" value="5" />
+                  <span>倍</span>
+                  <button id="refreshSimulationResults" type="button">刷新结果</button>
+                </div>
+              </section>
+              <section class="panelSection destinationFailureBlock">
+                <p id="testedRouteCount" class="testedRouteCount">共测试 0 条路线</p>
+                <h3>目的地寻找失败次数</h3>
+                <div id="destinationFailureList" class="destinationFailureList">
+                  <div class="placeholderText">暂无寻找失败的目的地。</div>
+                </div>
+              </section>
               <div id="resultRoutePicker" class="simulationRoutePicker resultRoutePicker" hidden></div>
               <section class="panelSection resultFeedbackSection">
                 <h2>问题反馈</h2>
