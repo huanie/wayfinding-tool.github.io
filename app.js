@@ -3234,7 +3234,11 @@ function chooseNextSimulationStep(
       .sort((a, b) => directionScore(heading, a.heading) - directionScore(heading, b.heading))[0];
     return { ...continuation, method: "only-route" };
   }
-  const rawDecisionChoices = forwardChoices.length ? forwardChoices : choices;
+  // A valid sign may explicitly direct the person back along the arrival edge.
+  // Apply the instruction before the normal "avoid backtracking" preference.
+  const rawDecisionChoices = guidance
+    ? choices
+    : forwardChoices.length ? forwardChoices : choices;
   const decisionChoices = expandedDecisionChoices(currentKey, previousKey, nodes, graph, rawDecisionChoices, visitedEdges);
   const isDecision = choices.length >= 3;
   const decisionIndex = navigationState.decisionCount || 0;
