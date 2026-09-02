@@ -531,6 +531,28 @@ function fitCanvasToViewport(img) {
   canvas.dataset.scale = String(scale);
 }
 
+function fitCanvasDisplayToViewport() {
+  if (!canvas.width || !canvas.height) return;
+  const wrapStyle = window.getComputedStyle(canvasWrap);
+  const horizontalPadding =
+    (Number.parseFloat(wrapStyle.paddingLeft) || 0) +
+    (Number.parseFloat(wrapStyle.paddingRight) || 0);
+  const verticalPadding =
+    (Number.parseFloat(wrapStyle.paddingTop) || 0) +
+    (Number.parseFloat(wrapStyle.paddingBottom) || 0);
+  const wrapWidth = Math.max(1, canvasWrap.clientWidth - horizontalPadding);
+  const wrapHeight = Math.max(1, canvasWrap.clientHeight - verticalPadding);
+  const displayScale = Math.min(1, wrapWidth / canvas.width, wrapHeight / canvas.height);
+  const displayWidth = Math.max(1, Math.floor(canvas.width * displayScale));
+  const displayHeight = Math.max(1, Math.floor(canvas.height * displayScale));
+
+  [canvas, canvasBackdrop, baseImagePreview].forEach((element) => {
+    if (!element) return;
+    element.style.width = `${displayWidth}px`;
+    element.style.height = `${displayHeight}px`;
+  });
+}
+
 function buildBaseMap() {
   if (!state.image) return;
   const offscreen = document.createElement("canvas");
@@ -556,14 +578,7 @@ function syncBaseControls() {
 
 function syncBasePreview() {
   if (!baseImagePreview) return;
-  const previewWidth = `${canvas.width}px`;
-  const previewHeight = `${canvas.height}px`;
-  if (canvasBackdrop) {
-    canvasBackdrop.style.width = previewWidth;
-    canvasBackdrop.style.height = previewHeight;
-  }
-  baseImagePreview.style.width = previewWidth;
-  baseImagePreview.style.height = previewHeight;
+  fitCanvasDisplayToViewport();
   const hasImage = Boolean(state.image?.src);
   baseImagePreview.hidden = !hasImage || state.layers.base === false;
   baseImagePreview.style.opacity = String(state.baseOpacity);
@@ -571,17 +586,7 @@ function syncBasePreview() {
 }
 
 function refitBaseMap() {
-  if (!state.image) return;
-  const oldWidth = canvas.width || 1;
-  const oldHeight = canvas.height || 1;
-  fitCanvasToViewport(state.image);
-  const sx = canvas.width / oldWidth;
-  const sy = canvas.height / oldHeight;
-  if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) {
-    scaleExistingGeometry(sx, sy);
-  }
-  buildBaseMap();
-  redraw();
+  fitCanvasDisplayToViewport();
 }
 
 function scaleExistingGeometry(sx, sy) {
@@ -5473,14 +5478,7 @@ function restoreProject(project) {
     img.onload = () => {
       state.image = img;
       baseImagePreview.src = project.base.baseDataUrl;
-      const restoredWidth = canvas.width || img.naturalWidth || 1;
-      const restoredHeight = canvas.height || img.naturalHeight || 1;
-      fitCanvasToViewport(img);
-      const sx = canvas.width / restoredWidth;
-      const sy = canvas.height / restoredHeight;
-      if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) {
-        scaleExistingGeometry(sx, sy);
-      }
+      if (!savedCanvas?.width || !savedCanvas?.height) fitCanvasToViewport(img);
       const restored = document.createElement("canvas");
       restored.width = canvas.width;
       restored.height = canvas.height;
