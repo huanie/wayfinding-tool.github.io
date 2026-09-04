@@ -13,6 +13,12 @@ const toolTitle = document.querySelector("#toolTitle");
 const toolHint = document.querySelector("#toolHint");
 const projectInput = document.querySelector("#projectInput");
 const saveProjectBtn = document.querySelector("#saveProject");
+const exportReportBtn = document.querySelector("#exportReport");
+const reportPanel = document.querySelector("#reportPanel");
+const reportProjectNameInput = document.querySelector("#reportProjectName");
+const reportRemarkInput = document.querySelector("#reportRemark");
+const generateReportBtn = document.querySelector("#generateReport");
+const reportStatus = document.querySelector("#reportStatus");
 
 const baseMode = document.querySelector("#baseMode");
 const scaleMode = document.querySelector("#scaleMode");
@@ -73,6 +79,10 @@ const showWidthLabelsInput = document.querySelector("#showWidthLabels");
 const applyWidthBtn = document.querySelector("#applyWidth");
 const confirmInterfaceBtn = document.querySelector("#confirmInterface");
 const infoInput = document.querySelector("#infoInput");
+const importSpaceListBtn = document.querySelector("#importSpaceList");
+const spaceListInput = document.querySelector("#spaceListInput");
+const spaceImportSummary = document.querySelector("#spaceImportSummary");
+const spaceImportList = document.querySelector("#spaceImportList");
 const spaceNameInput = document.querySelector("#spaceName");
 const spaceTypeInput = document.querySelector("#spaceType");
 const spaceNumberInput = document.querySelector("#spaceNumber");
@@ -85,6 +95,7 @@ const signPlacementModeBtn = document.querySelector("#signPlacementMode");
 const signInfoModeBtn = document.querySelector("#signInfoMode");
 const signPlacementFields = document.querySelector("#signPlacementFields");
 const signInfoControls = document.querySelector("#signInfoControls");
+const uploadSignCodeBtn = document.querySelector("#uploadSignCode");
 const signInstallTypeInput = document.querySelector("#signInstallType");
 const signHangingFacingInput = document.querySelector("#signHangingFacing");
 const signHangingFacingField = document.querySelector("#signHangingFacingField");
@@ -95,6 +106,13 @@ const signAssociationSubtitle = document.querySelector("#signAssociationSubtitle
 const signAssociationEmpty = document.querySelector("#signAssociationEmpty");
 const signAssociationEditor = document.querySelector("#signAssociationEditor");
 const signAssociationImport = document.querySelector("#signAssociationImport");
+const signAssociationPasteBtn = document.querySelector("#signAssociationPaste");
+const signListPasteDialog = document.querySelector("#signListPasteDialog");
+const signListPasteTitle = document.querySelector("#signListPasteTitle");
+const signListPasteInput = document.querySelector("#signListPasteInput");
+const closeSignListPasteBtn = document.querySelector("#closeSignListPaste");
+const cancelSignListPasteBtn = document.querySelector("#cancelSignListPaste");
+const applySignListPasteBtn = document.querySelector("#applySignListPaste");
 const signDirectionButtons = Array.from(document.querySelectorAll("[data-sign-action]"));
 const signSpacePicker = document.querySelector("#signSpacePicker");
 const signSpacePickerTitle = document.querySelector("#signSpacePickerTitle");
@@ -187,6 +205,8 @@ const state = {
   interfaceConfirmed: false,
   infoMapName: "",
   spaces: [],
+  importedSpaces: [],
+  selectedImportedSpaceId: null,
   spaceEquivalentPoints: [],
   selectedSpaceId: null,
   selectedEquivalentPointId: null,
@@ -319,6 +339,7 @@ function restoreDrawingSnapshot(tool, snapshot) {
     syncSpaceFields();
     refreshSignTargets();
     refreshTestSpaceOptions();
+    renderImportedSpaces();
   } else if (tool === "sign") {
     state.signs = cloneSignsForHistory(snapshot.signs);
     state.selectedSignId = snapshot.selectedSignId;
@@ -2578,6 +2599,125 @@ function panelActionLabel(action) {
   }[action] || "向前";
 }
 
+function signActionFromListLabel(label) {
+  const normalized = String(label || "").replace(/\s+/g, "").replace(/[。；;，,]+$/g, "");
+  return {
+    "向前": "straight",
+    "前": "straight",
+    "直行": "straight",
+    "左上": "leftFront",
+    "左前": "leftFront",
+    "右上": "rightFront",
+    "右前": "rightFront",
+    "左拐": "left",
+    "左转": "left",
+    "右拐": "right",
+    "右转": "right",
+    "向后": "back",
+    "后": "back",
+    "掉头": "back",
+  }[normalized] || "";
+}
+
+function parseSpaceDirectionList(text) {
+  const expanded = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/\s*[【\[]\s*(正面|背面)\s*[】\]]\s*/g, "\n【$1】\n")
+    .replace(/[；;]/g, "\n")
+    .replace(/\s+(?=\d+\s*[.、)）]\s*)/g, "\n");
+  const entries = [];
+  const errors = [];
+  let face = null;
+  expanded.split(/\n+/).forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return;
+    if (/^【正面】$/.test(line)) {
+      face = "front";
+      return;
+    }
+    if (/^【背面】$/.test(line)) {
+      face = "back";
+      return;
+    }
+    const content = line.replace(/^\d+\s*[.、)）]\s*/, "");
+    const separator = content.search(/[:：]/);
+    if (separator < 0) {
+      errors.push(`无法识别「${line}」`);
+      return;
+    }
+    const spaceName = content.slice(0, separator).trim();
+    const directionLabel = content.slice(separator + 1).trim();
+    const action = signActionFromListLabel(directionLabel);
+    if (!spaceName || !action) {
+      errors.push(`名称或方向无效「${line}」`);
+      return;
+    }
+    entries.push({ spaceName, action, directionLabel, face });
+  });
+  return { entries, errors };
+}
+
+function normalizedImportedSpaceName(name) {
+  return String(name || "").replace(/\s+/g, "").toLocaleLowerCase("zh-Hans");
+}
+
+function importSpaceDirectionList(sign, text) {
+  const { entries, errors } = parseSpaceDirectionList(text);
+  if (!entries.length) return { imported: 0, unmatched: [], errors };
+  normalizeSignFaces(sign);
+  const fallbackFace = sign.installType === "hanging" && state.signAssociationFace === "back" ? "back" : "front";
+  const unmatched = [];
+  let imported = 0;
+  const faceCounts = { front: 0, back: 0 };
+  entries.forEach(({ spaceName, action, face }) => {
+    const targetFace = sign.installType === "hanging" && face ? face : fallbackFace;
+    const targetName = normalizedImportedSpaceName(spaceName);
+    const matches = state.spaces.filter((space) => normalizedImportedSpaceName(space.name) === targetName);
+    if (!matches.length) {
+      unmatched.push(spaceName);
+      return;
+    }
+    matches.forEach((space) => {
+      signActionOrder.forEach((candidate) => {
+        sign.destinationsByFace[targetFace][candidate] = (sign.destinationsByFace[targetFace][candidate] || [])
+          .filter((id) => id !== space.id);
+      });
+      sign.destinationsByFace[targetFace][action].push(space.id);
+      sign.destinationsByFace[targetFace][action] = Array.from(new Set(sign.destinationsByFace[targetFace][action]));
+      imported += 1;
+      faceCounts[targetFace] += 1;
+    });
+  });
+  sign.destinationsByAction = sign.destinationsByFace.front;
+  sign.targetSpaceId = "";
+  sign.customText = "";
+  sign.text = composeSignDefaultText(sign.installType, sign.number);
+  return { imported, unmatched: Array.from(new Set(unmatched)), errors, faceCounts, fallbackFace };
+}
+
+function applySpaceDirectionText(sign, text, sourceLabel) {
+  const preview = parseSpaceDirectionList(text);
+  if (!preview.entries.length) {
+    setStatus(`${sourceLabel}中没有可导入的空间方向信息。请使用“1.会议室01：向前”的格式。`);
+    return false;
+  }
+  recordDrawingChange("sign");
+  const result = importSpaceDirectionList(sign, text);
+  clearSimulationResults();
+  renderSignAssociationEditor();
+  updateStatus();
+  redraw();
+  const faceText = sign.installType === "hanging"
+    ? `（正面 ${result.faceCounts.front} 条，背面 ${result.faceCounts.back} 条）`
+    : "";
+  const details = [
+    result.unmatched.length ? `未找到空间：${result.unmatched.join("、")}` : "",
+    result.errors.length ? `未识别：${result.errors.join("；")}` : "",
+  ].filter(Boolean).join("；");
+  setStatus(`已从${sourceLabel}导入 ${result.imported} 条空间方向关联${faceText}${details ? `；${details}` : ""}。`);
+  return true;
+}
+
 function emptySignDestinations() {
   return Object.fromEntries(signActionOrder.map((action) => [action, []]));
 }
@@ -3530,6 +3670,11 @@ function routePrd(result) {
   return actualDistance / optimalDistance;
 }
 
+function routePrdForAllAggregation(result) {
+  const value = routePrd(result);
+  return Number.isFinite(value) ? Math.max(1, value) : null;
+}
+
 function updatePrdMetric() {
   if (!prdMeanValue || !effectivePrdMeanValue) return;
   const selected = new Set(selectedResultIds());
@@ -3537,14 +3682,16 @@ function updatePrdMetric() {
   const scopedResults = selected.size
     ? allResults.filter((result) => selected.has(result.id))
     : allResults;
-  const meanText = (results) => {
-    const values = results.map(routePrd).filter((value) => Number.isFinite(value));
+  const meanText = (results, clampBelowOne = false) => {
+    const calculator = clampBelowOne ? routePrdForAllAggregation : routePrd;
+    const values = results.map(calculator).filter((value) => Number.isFinite(value));
     return values.length
       ? (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)
       : "--";
   };
-  prdMeanValue.textContent = meanText(scopedResults);
-  effectivePrdMeanValue.textContent = meanText(scopedResults.filter((result) => result.success === true));
+  const isAllRoutes = selected.size === 0;
+  prdMeanValue.textContent = meanText(scopedResults, isAllRoutes);
+  effectivePrdMeanValue.textContent = meanText(scopedResults.filter((result) => result.success === true), isAllRoutes);
   if (failureDistanceMultiplierInput) {
     failureDistanceMultiplierInput.value = String(state.test.failureDistanceMultiplier || 5);
   }
@@ -5061,6 +5208,233 @@ function composeSpaceName(type, number, customName = "") {
   return number ? `${label} ${number}` : label;
 }
 
+const importedSpaceTypeAliases = {
+  "电梯厅": "elevator_lobby", "电梯间": "elevator_lobby",
+  "工区": "work_area", "办公区": "work_area",
+  "会议室": "meeting_room", "茶水间": "pantry",
+  "男卫生间": "male_restroom", "男厕": "male_restroom",
+  "女卫生间": "female_restroom", "女厕": "female_restroom",
+  "卫生间": "restroom", "打印区": "print_area",
+  "开放协作区": "multifunction_room", "多功能区": "multifunction_room",
+  "培训室": "training_room", "实验室": "lab", "楼梯间": "stairwell",
+  "直播间": "live_room", "讨论舱": "discussion_pod", "服务室": "service_room",
+  "电话亭": "phone", "小邮局": "small_post_office", "按摩室": "massage_room",
+  "健身房": "gym", "餐厅": "restaurant", "展厅": "exhibition_hall",
+  "行政服务室": "admin_service_room", "IT服务室": "it_service_room",
+  "财务服务室": "finance_service_room", "人力服务室": "hr_service_room",
+  "HR服务室": "hr_service_room", "其他": "other",
+};
+
+function normalizeImportCell(value) {
+  return String(value ?? "").replace(/^\uFEFF/, "").trim();
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let value = "";
+  let quoted = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (char === '"' && source[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else if (char === '"') quoted = false;
+      else value += char;
+    } else if (char === '"') quoted = true;
+    else if (char === "," || char === "\t") {
+      row.push(value);
+      value = "";
+    } else if (char === "\n") {
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = "";
+    } else if (char !== "\r") value += char;
+  }
+  if (value || row.length) {
+    row.push(value);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function spreadsheetColumnIndex(reference) {
+  const letters = String(reference || "").match(/^[A-Z]+/i)?.[0]?.toUpperCase() || "A";
+  return letters.split("").reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0) - 1;
+}
+
+async function unzipXlsxEntries(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  let end = -1;
+  for (let index = Math.max(0, bytes.length - 65557); index <= bytes.length - 22; index += 1) {
+    if (view.getUint32(index, true) === 0x06054b50) end = index;
+  }
+  if (end < 0) throw new Error("不是有效的 Excel 文件");
+  const count = view.getUint16(end + 10, true);
+  let cursor = view.getUint32(end + 16, true);
+  const decoder = new TextDecoder();
+  const entries = new Map();
+  for (let entryIndex = 0; entryIndex < count; entryIndex += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) break;
+    const method = view.getUint16(cursor + 10, true);
+    const compressedSize = view.getUint32(cursor + 20, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const name = decoder.decode(bytes.slice(cursor + 46, cursor + 46 + nameLength));
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+    let data;
+    if (method === 0) data = compressed;
+    else if (method === 8 && typeof DecompressionStream !== "undefined") {
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      data = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else throw new Error("当前浏览器无法解压这个 Excel 文件");
+    entries.set(name, data);
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function xmlText(bytes) {
+  return new TextDecoder().decode(bytes || new Uint8Array());
+}
+
+async function parseXlsxRows(file) {
+  const entries = await unzipXlsxEntries(await file.arrayBuffer());
+  const shared = [];
+  if (entries.has("xl/sharedStrings.xml")) {
+    const doc = new DOMParser().parseFromString(xmlText(entries.get("xl/sharedStrings.xml")), "application/xml");
+    doc.querySelectorAll("si").forEach((node) => shared.push(Array.from(node.querySelectorAll("t")).map((item) => item.textContent || "").join("")));
+  }
+  const workbook = new DOMParser().parseFromString(xmlText(entries.get("xl/workbook.xml")), "application/xml");
+  const firstSheet = workbook.querySelector("sheet");
+  if (!firstSheet) return [];
+  const relationId = firstSheet.getAttribute("r:id") || firstSheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+  const relationships = new DOMParser().parseFromString(xmlText(entries.get("xl/_rels/workbook.xml.rels")), "application/xml");
+  const relationship = Array.from(relationships.querySelectorAll("Relationship")).find((node) => node.getAttribute("Id") === relationId);
+  let target = relationship?.getAttribute("Target") || "worksheets/sheet1.xml";
+  target = target.replace(/^\//, "").replace(/^xl\//, "");
+  const sheetBytes = entries.get(`xl/${target}`) || entries.get("xl/worksheets/sheet1.xml");
+  if (!sheetBytes) throw new Error("Excel 中没有可读取的工作表");
+  const sheet = new DOMParser().parseFromString(xmlText(sheetBytes), "application/xml");
+  return Array.from(sheet.querySelectorAll("row")).map((rowNode) => {
+    const row = [];
+    rowNode.querySelectorAll("c").forEach((cell) => {
+      const type = cell.getAttribute("t");
+      const raw = cell.querySelector("v")?.textContent || "";
+      const value = type === "s" ? shared[Number(raw)] || ""
+        : type === "inlineStr" ? Array.from(cell.querySelectorAll("t")).map((node) => node.textContent || "").join("")
+        : raw;
+      row[spreadsheetColumnIndex(cell.getAttribute("r"))] = value;
+    });
+    return row;
+  });
+}
+
+function importedSpaceKey(item) {
+  return [item.type, item.number, item.customName].map((value) => normalizeImportCell(value).toLocaleLowerCase("zh-Hans")).join("|");
+}
+
+function importedSpaceFromRow(row, columns, rowIndex) {
+  const rawType = normalizeImportCell(row[columns.type]);
+  const rawNumber = normalizeImportCell(row[columns.number]);
+  const rawName = normalizeImportCell(row[columns.name]);
+  if (!rawType && !rawNumber && !rawName) return null;
+  const type = importedSpaceTypeAliases[rawType] || Object.keys(spaceTypeLabels).find((key) => key === rawType) || "other";
+  const customName = rawName || (type === "other" && rawType !== "其他" ? [rawType, rawNumber].filter(Boolean).join(" ") : "");
+  const number = numberedSpaceTypes.has(type) ? rawNumber : "";
+  return {
+    id: `imported-space-${Date.now()}-${rowIndex}-${Math.random().toString(16).slice(2)}`,
+    type,
+    number,
+    customName,
+    name: composeSpaceName(type, number, customName),
+    sourceRow: rowIndex + 1,
+  };
+}
+
+function rowsToImportedSpaces(rows) {
+  const nonEmpty = rows.filter((row) => row.some((cell) => normalizeImportCell(cell)));
+  if (!nonEmpty.length) return [];
+  const headers = nonEmpty[0].map((value) => normalizeImportCell(value).replace(/\s+/g, ""));
+  const findColumn = (names) => headers.findIndex((header) => names.includes(header));
+  const columns = {
+    type: findColumn(["空间类型", "类型", "空间类别"]),
+    number: findColumn(["编号", "空间编号", "序号"]),
+    name: findColumn(["自定义名称", "空间名称", "名称"]),
+  };
+  if (columns.type < 0 && columns.name < 0) throw new Error("缺少“空间类型”或“自定义名称”列");
+  return nonEmpty.slice(1).map((row, index) => importedSpaceFromRow(row, columns, index + 1)).filter(Boolean);
+}
+
+function importedSpacePlacement(item) {
+  return state.spaces.find((space) => space.importSourceId === item.id)
+    || state.spaces.find((space) => !space.importSourceId && importedSpaceKey(space) === importedSpaceKey(item));
+}
+
+function renderImportedSpaces() {
+  if (!spaceImportList || !spaceImportSummary) return;
+  const items = state.importedSpaces || [];
+  const keyCounts = new Map();
+  items.forEach((item) => keyCounts.set(importedSpaceKey(item), (keyCounts.get(importedSpaceKey(item)) || 0) + 1));
+  const placedCount = items.filter(importedSpacePlacement).length;
+  const duplicateCount = items.filter((item) => (keyCounts.get(importedSpaceKey(item)) || 0) > 1).length;
+  spaceImportSummary.hidden = !items.length;
+  spaceImportList.hidden = !items.length;
+  spaceImportSummary.textContent = items.length
+    ? `共 ${items.length} 项 · 已布置 ${placedCount} · 未布置 ${items.length - placedCount} · 重复 ${duplicateCount}`
+    : "";
+  spaceImportList.innerHTML = "";
+  items.forEach((item, index) => {
+    const placed = importedSpacePlacement(item);
+    const duplicate = (keyCounts.get(importedSpaceKey(item)) || 0) > 1;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spaceImportItem";
+    button.classList.toggle("active", state.selectedImportedSpaceId === item.id);
+    button.classList.toggle("placed", Boolean(placed));
+    button.classList.toggle("duplicate", duplicate && !placed);
+    button.innerHTML = `<span class="spaceImportIndex">${index + 1}</span><span class="spaceImportName"></span><span class="spaceImportState"></span>`;
+    button.querySelector(".spaceImportName").textContent = item.name;
+    button.querySelector(".spaceImportState").textContent = placed ? "已布置" : duplicate ? "重复" : "待布置";
+    button.addEventListener("click", () => {
+      state.selectedImportedSpaceId = item.id;
+      spaceTypeInput.value = item.type;
+      populateSpaceNumbers(item.type, item.number || "");
+      spaceNumberInput.value = item.number || "";
+      spaceNameInput.value = item.customName || "";
+      state.spaceNumberOverride = Boolean(item.number);
+      state.selectedSpaceId = placed?.id || null;
+      state.selectedEquivalentPointId = null;
+      renderImportedSpaces();
+      setStatus(placed ? `「${item.name}」已布置，可在画板上拖动或修改。` : `已选择「${item.name}」，请在信息界面上点击布点。`);
+      redraw();
+    });
+    spaceImportList.appendChild(button);
+  });
+}
+
+function selectNextUnplacedImportedSpace() {
+  const next = (state.importedSpaces || []).find((item) => !importedSpacePlacement(item));
+  state.selectedImportedSpaceId = next?.id || null;
+  if (next) {
+    spaceTypeInput.value = next.type;
+    populateSpaceNumbers(next.type, next.number || "");
+    spaceNumberInput.value = next.number || "";
+    spaceNameInput.value = next.customName || "";
+    state.spaceNumberOverride = Boolean(next.number);
+  }
+  renderImportedSpaces();
+}
+
 function selectedSpace() {
   return state.spaces.find((space) => space.id === state.selectedSpaceId) ?? null;
 }
@@ -5359,6 +5733,8 @@ async function serializeProject() {
     scaleCalibration: structuredClone(state.scaleCalibration),
     segments: state.segments,
     spaces: state.spaces,
+    importedSpaces: state.importedSpaces,
+    selectedImportedSpaceId: state.selectedImportedSpaceId,
     spaceEquivalentPoints: state.spaceEquivalentPoints,
     signs,
     test: state.test,
@@ -5394,6 +5770,8 @@ function restoreProject(project) {
   };
   state.segments = structuredClone(project.segments || []);
   state.spaces = structuredClone(project.spaces || []);
+  state.importedSpaces = structuredClone(project.importedSpaces || []);
+  state.selectedImportedSpaceId = project.selectedImportedSpaceId || null;
   state.spaceEquivalentPoints = structuredClone(project.spaceEquivalentPoints || []);
   state.signs = (project.signs || []).map((sign) => ({
     ...sign,
@@ -5472,6 +5850,7 @@ function restoreProject(project) {
   syncPersonInputs();
   syncStartHeadingControls();
   updateSimulationPanels();
+  renderImportedSpaces();
 
   if (project.base?.baseDataUrl) {
     const img = new Image();
@@ -5517,11 +5896,16 @@ function addSpaceAt(point) {
     setStatus("还没有可吸附的信息界面。请先调宽度并确认行走范围。");
     return;
   }
-  const type = spaceTypeInput.value || "elevator_lobby";
-  const number = state.spaceNumberOverride
+  const imported = (state.importedSpaces || []).find((item) => item.id === state.selectedImportedSpaceId) || null;
+  if (imported && importedSpacePlacement(imported)) {
+    setStatus(`「${imported.name}」已经布置，请选择其他待布置空间。`);
+    return;
+  }
+  const type = imported?.type || spaceTypeInput.value || "elevator_lobby";
+  const number = imported ? imported.number : state.spaceNumberOverride
     ? resolveSpaceNumber(type, spaceNumberInput.value)
     : resolveSpaceNumber(type, "");
-  const customName = spaceNameInput.value;
+  const customName = imported?.customName ?? spaceNameInput.value;
   const name = composeSpaceName(type, number, customName);
   const space = {
     id: `space-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -5531,7 +5915,8 @@ function addSpaceAt(point) {
     customName: customName.trim(),
     point: clonePoint(snap.point),
     segmentId: snap.segmentId,
-    source: state.infoMapName ? "review-from-plan" : "manual",
+    source: imported ? "imported-list" : state.infoMapName ? "review-from-plan" : "manual",
+    importSourceId: imported?.id || "",
   };
   recordDrawingChange("info");
   state.spaces.push(space);
@@ -5542,6 +5927,13 @@ function addSpaceAt(point) {
   refreshTestSpaceOptions();
   updateStatus();
   redraw();
+  if (imported) {
+    const placedName = space.name;
+    selectNextUnplacedImportedSpace();
+    setStatus(state.selectedImportedSpaceId
+      ? `已布置「${placedName}」，已自动选择下一项。`
+      : `空间信息清单中的 ${state.importedSpaces.length} 项已全部布置。`);
+  }
 }
 
 function addEquivalentSpacePointAt(point) {
@@ -5690,6 +6082,7 @@ function removeSpacesById(ids) {
   if (affectsTest) clearComputedTestPaths();
   refreshSignTargets();
   refreshTestSpaceOptions();
+  renderImportedSpaces();
 }
 
 function removeEquivalentSpacePointsById(ids) {
@@ -6327,10 +6720,325 @@ saveProjectBtn.addEventListener("click", async () => {
   link.click();
 });
 
+function reportMetrics() {
+  const results = (state.test.routeResults || []).filter((result) => result.simulated);
+  const successful = results.filter((result) => result.success === true);
+  const mean = (items) => {
+    const values = items.map(routePrdForAllAggregation).filter((value) => Number.isFinite(value));
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+  const failures = new Map();
+  results.filter((result) => result.success === false).forEach((result) => {
+    const name = spaceById(result.endSpaceId)?.name || "未命名目的地";
+    if (!failures.has(name)) failures.set(name, []);
+    failures.get(name).push(result);
+  });
+  return {
+    results,
+    successful,
+    prdMean: mean(results),
+    effectivePrdMean: mean(successful),
+    failures: [...failures.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "zh-CN")),
+  };
+}
+
+function drawReportText(context, text, x, y, maxWidth, lineHeight, options = {}) {
+  const lines = [];
+  let line = "";
+  [...String(text || "")].forEach((character) => {
+    const next = line + character;
+    if (line && context.measureText(next).width > maxWidth) {
+      lines.push(line);
+      line = character;
+    } else line = next;
+  });
+  if (line) lines.push(line);
+  const limited = options.maxLines ? lines.slice(0, options.maxLines) : lines;
+  limited.forEach((item, index) => context.fillText(item, x, y + index * lineHeight));
+  return y + Math.max(1, limited.length) * lineHeight;
+}
+
+function reportMapCanvas() {
+  const snapshot = document.createElement("canvas");
+  snapshot.width = Math.max(1, canvas.width);
+  snapshot.height = Math.max(1, canvas.height);
+  const snapshotContext = snapshot.getContext("2d");
+  snapshotContext.fillStyle = "#ffffff";
+  snapshotContext.fillRect(0, 0, snapshot.width, snapshot.height);
+  if (state.layers.base && state.baseCanvas && !baseImagePreview.hidden) {
+    snapshotContext.globalAlpha = state.baseOpacity;
+    snapshotContext.drawImage(state.baseCanvas, 0, 0);
+    snapshotContext.globalAlpha = 1;
+  }
+  snapshotContext.drawImage(canvas, 0, 0);
+  return snapshot;
+}
+
+function drawReportHeader(context, projectName, remark, pageNumber, generatedAt) {
+  context.fillStyle = "#172033";
+  context.font = '700 34px "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.fillText(`${projectName}-寻路模拟测试报告`, 76, 82);
+  context.fillStyle = "#667085";
+  context.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.fillText(`测试时间：${generatedAt.toLocaleString("zh-CN", { hour12: false })}`, 76, 116);
+  if (remark) drawReportText(context, `备注：${remark}`, 76, 144, 850, 22, { maxLines: 2 });
+  context.textAlign = "right";
+  context.fillText(`第 ${pageNumber} 页`, 1164, 116);
+  context.textAlign = "left";
+  context.strokeStyle = "#d8e0ea";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(76, 174);
+  context.lineTo(1164, 174);
+  context.stroke();
+}
+
+function reportRouteNames(result) {
+  const startSpace = result.start?.spaceId ? spaceById(result.start.spaceId) : null;
+  return {
+    label: result.label || result.id || "--",
+    startName: startSpace?.name || (result.start?.source === "free" ? "平面选点" : "未设置起点"),
+    endName: spaceById(result.endSpaceId)?.name || "未命名目的地",
+  };
+}
+
+function createReportPages(projectName, remark = "") {
+  const metrics = reportMetrics();
+  if (!metrics.results.length) throw new Error("请先完成至少一条路线模拟，再输出报告。");
+  const generatedAt = new Date();
+  const createPage = (pageNumber) => {
+    const page = document.createElement("canvas");
+    page.width = 1240;
+    page.height = 1754;
+    const context = page.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, page.width, page.height);
+    drawReportHeader(context, projectName, remark, pageNumber, generatedAt);
+    return { page, context };
+  };
+  const first = createPage(1);
+  const { page, context } = first;
+  const failedCount = metrics.results.length - metrics.successful.length;
+  const successRate = metrics.results.length ? metrics.successful.length / metrics.results.length : 0;
+  [["测试路线", `${metrics.results.length} 条`], ["寻路成功", `${metrics.successful.length} 条`], ["寻路失败", `${failedCount} 条`], ["成功率", `${(successRate * 100).toFixed(1)}%`]].forEach(([label, value], index) => {
+    const x = 76 + (index % 2) * 278;
+    const y = 208 + Math.floor(index / 2) * 96;
+    context.fillStyle = "#f7f9fc";
+    context.strokeStyle = "#d8e0ea";
+    context.beginPath();
+    context.roundRect(x, y, 252, 76, 8);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#667085";
+    context.font = '500 17px "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText(label, x + 18, y + 27);
+    context.fillStyle = "#172033";
+    context.font = '700 25px "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText(value, x + 18, y + 59);
+  });
+  const ratio = pixelsPerMeter();
+  const vision = ratio ? `${(state.test.person.visionDistance / ratio).toFixed(1)} m` : `${Math.round(state.test.person.visionDistance)} px`;
+  context.fillStyle = "#667085";
+  context.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.fillText(`视距：${vision}`, 76, 414);
+  context.fillText(`常规视角：${Math.round(state.test.person.normalAngle)}°`, 248, 414);
+  context.fillText(`决策点视角：${Math.round(state.test.person.decisionAngle)}°`, 430, 414);
+  context.fillText(`失败判定：模拟距离达到最优距离的 ${Math.max(1, Number(state.test.failureDistanceMultiplier) || 5)} 倍`, 76, 444);
+  context.fillStyle = "#f3f7ff";
+  context.strokeStyle = "#9ec5ff";
+  context.beginPath();
+  context.roundRect(654, 208, 510, 236, 12);
+  context.fill();
+  context.stroke();
+  [["PRD 均值", metrics.prdMean], ["有效 PRD 均值", metrics.effectivePrdMean]].forEach(([label, value], index) => {
+    const x = 682 + index * 236;
+    context.fillStyle = "#52647d";
+    context.font = '600 18px "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText(label, x, 250);
+    context.fillStyle = "#1677ff";
+    context.font = '800 48px "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText(value === null ? "--" : value.toFixed(2), x, 310);
+  });
+  context.fillStyle = "#344054";
+  context.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+  drawReportText(context, "PRD（Pedestrian Route Directness，路径直达率）= 模拟路径距离 ÷ 最优路径距离；汇总全部路径时，小于 1 的值按 1 计算。", 682, 354, 448, 24, { maxLines: 2 });
+  context.fillStyle = "#667085";
+  context.font = '400 15px "PingFang SC", "Microsoft YaHei", sans-serif';
+  drawReportText(context, "有效 PRD 均值仅统计寻路成功路线，用于辅助判断导向标识是否形成有效指引。", 682, 408, 448, 22, { maxLines: 2 });
+  context.fillStyle = "#172033";
+  context.font = '700 23px "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.fillText("测试模拟图", 76, 500);
+  const map = reportMapCanvas();
+  const mapBox = { x: 76, y: 530, width: 1088, height: 600 };
+  context.fillStyle = "#f8fafc";
+  context.fillRect(mapBox.x, mapBox.y, mapBox.width, mapBox.height);
+  const scale = Math.min(mapBox.width / map.width, mapBox.height / map.height);
+  const width = map.width * scale;
+  const height = map.height * scale;
+  context.drawImage(map, mapBox.x + (mapBox.width - width) / 2, mapBox.y + (mapBox.height - height) / 2, width, height);
+  context.strokeStyle = "#d8e0ea";
+  context.strokeRect(mapBox.x, mapBox.y, mapBox.width, mapBox.height);
+  context.fillStyle = "#172033";
+  context.font = '700 23px "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.fillText("目的地寻找失败次数", 76, 1185);
+  context.fillStyle = "#667085";
+  context.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.fillText("每个目的地下列出失败路线及对应起终点", 76, 1217);
+
+  const pages = [page];
+  let detailContext = context;
+  let detailY = 1244;
+  let pageNumber = 1;
+  const ensureDetailSpace = (heightNeeded) => {
+    if (detailY + heightNeeded <= 1665) return;
+    pageNumber += 1;
+    const next = createPage(pageNumber);
+    pages.push(next.page);
+    detailContext = next.context;
+    detailContext.fillStyle = "#172033";
+    detailContext.font = '700 24px "PingFang SC", "Microsoft YaHei", sans-serif';
+    detailContext.fillText("目的地寻找失败次数（续）", 76, 224);
+    detailY = 250;
+  };
+  const sections = [];
+  metrics.failures.forEach(([name, routes]) => {
+    for (let offset = 0; offset < routes.length; offset += 12) {
+      sections.push({ name: offset ? `${name}（续）` : name, total: routes.length, routes: routes.slice(offset, offset + 12) });
+    }
+  });
+  const drawSection = (section, x, y) => {
+    const columnWidth = 520;
+    detailContext.fillStyle = "#f8fafc";
+    detailContext.strokeStyle = "#d8e0ea";
+    detailContext.beginPath();
+    detailContext.roundRect(x, y, columnWidth, 48, 8);
+    detailContext.fill();
+    detailContext.stroke();
+    detailContext.fillStyle = "#172033";
+    detailContext.font = '700 17px "PingFang SC", "Microsoft YaHei", sans-serif';
+    detailContext.fillText(section.name, x + 14, y + 31);
+    detailContext.fillStyle = "#d8334a";
+    detailContext.textAlign = "right";
+    detailContext.fillText(`${section.total} 次`, x + columnWidth - 14, y + 31);
+    detailContext.textAlign = "left";
+    section.routes.forEach((result, index) => {
+      const route = reportRouteNames(result);
+      detailContext.fillStyle = "#52647d";
+      detailContext.font = '500 14px "PingFang SC", "Microsoft YaHei", sans-serif';
+      drawReportText(detailContext, `${route.label}　${route.startName} → ${route.endName}`, x + 12, y + 76 + index * 27, columnWidth - 24, 20, { maxLines: 1 });
+    });
+  };
+  for (let index = 0; index < sections.length; index += 2) {
+    const row = sections.slice(index, index + 2);
+    const rowHeight = Math.max(...row.map((section) => 68 + section.routes.length * 27));
+    ensureDetailSpace(rowHeight);
+    row.forEach((section, column) => drawSection(section, [76, 630][column], detailY));
+    detailY += rowHeight;
+  }
+  if (!metrics.failures.length) {
+    context.fillStyle = "#16845b";
+    context.font = '600 18px "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText("本次测试没有目的地寻找失败记录。", 76, 1270);
+  }
+  return pages;
+}
+
+function dataUrlBytes(dataUrl) {
+  const binary = atob(dataUrl.split(",")[1]);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function canvasesToPdf(pageCanvases) {
+  const encoder = new TextEncoder();
+  const objects = [];
+  const pageObjectIds = [];
+  const addObject = (parts) => { objects.push(parts); return objects.length; };
+  const catalogId = addObject([]);
+  const pagesId = addObject([]);
+  pageCanvases.forEach((pageCanvas) => {
+    const jpeg = dataUrlBytes(pageCanvas.toDataURL("image/jpeg", 0.92));
+    const imageId = addObject([encoder.encode(`<< /Type /XObject /Subtype /Image /Width ${pageCanvas.width} /Height ${pageCanvas.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`), jpeg, encoder.encode("\nendstream")]);
+    const content = encoder.encode("q\n595.28 0 0 841.89 0 0 cm\n/Im0 Do\nQ");
+    const contentId = addObject([encoder.encode(`<< /Length ${content.length} >>\nstream\n`), content, encoder.encode("\nendstream")]);
+    pageObjectIds.push(addObject([encoder.encode(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`)]));
+  });
+  objects[catalogId - 1] = [encoder.encode(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`)];
+  objects[pagesId - 1] = [encoder.encode(`<< /Type /Pages /Kids [${pageObjectIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageObjectIds.length} >>`)];
+  const chunks = [encoder.encode("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")];
+  const offsets = [0];
+  let length = chunks[0].length;
+  objects.forEach((parts, index) => {
+    offsets.push(length);
+    const prefix = encoder.encode(`${index + 1} 0 obj\n`);
+    const suffix = encoder.encode("\nendobj\n");
+    chunks.push(prefix, ...parts, suffix);
+    length += prefix.length + parts.reduce((sum, part) => sum + part.length, 0) + suffix.length;
+  });
+  const xrefOffset = length;
+  const xref = [`xref\n0 ${objects.length + 1}\n`, "0000000000 65535 f \n"];
+  offsets.slice(1).forEach((offset) => xref.push(`${String(offset).padStart(10, "0")} 00000 n \n`));
+  xref.push(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+  chunks.push(encoder.encode(xref.join("")));
+  return new Blob(chunks, { type: "application/pdf" });
+}
+
+exportReportBtn.addEventListener("click", () => {
+  const expanded = exportReportBtn.getAttribute("aria-expanded") === "true";
+  exportReportBtn.setAttribute("aria-expanded", String(!expanded));
+  reportPanel.hidden = expanded;
+  if (!expanded) reportProjectNameInput.focus();
+});
+
+generateReportBtn.addEventListener("click", () => {
+  const projectName = reportProjectNameInput.value.trim();
+  if (!projectName) {
+    reportStatus.textContent = "请先输入项目名称，例如：东畔科创中心10F。";
+    reportProjectNameInput.focus();
+    return;
+  }
+  try {
+    reportStatus.textContent = "正在生成报告...";
+    redraw();
+    const pdf = canvasesToPdf(createReportPages(projectName, reportRemarkInput.value.trim()));
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(pdf);
+    link.download = `${projectName.replace(/[\\/:*?"<>|]/g, "-")}-寻路模拟测试报告.pdf`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    reportStatus.textContent = "PDF 已生成并下载。";
+  } catch (error) {
+    reportStatus.textContent = error.message || "报告生成失败，请检查模拟结果。";
+  }
+});
+
 infoInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
   loadInfoFile(file);
+});
+
+importSpaceListBtn?.addEventListener("click", () => spaceListInput?.click());
+spaceListInput?.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const rows = file.name.toLowerCase().endsWith(".xlsx")
+      ? await parseXlsxRows(file)
+      : parseCsvRows(await file.text());
+    const imported = rowsToImportedSpaces(rows);
+    if (!imported.length) throw new Error("清单中没有可导入的空间");
+    state.importedSpaces = imported;
+    state.selectedImportedSpaceId = null;
+    selectNextUnplacedImportedSpace();
+    setTool("info");
+    setStatus(`已读取「${file.name}」中的 ${imported.length} 项空间信息。已选择第一项，请在信息界面上点击布点。`);
+  } catch (error) {
+    setStatus(`无法读取「${file.name}」：${error.message || "文件格式不正确"}`);
+  } finally {
+    event.target.value = "";
+  }
 });
 
 toggleGrayscaleBtn.addEventListener("click", () => {
@@ -6975,8 +7683,25 @@ signImageFaceButtons.forEach((button) => {
   });
 });
 confirmSignDirectionBtn.addEventListener("click", () => {
+  const sign = selectedSign();
+  if (!sign) {
+    setStatus("请先选择一个需要清除信息的导向标识。");
+    return;
+  }
+  recordDrawingChange("sign");
+  sign.destinationsByFace = {
+    front: emptySignDestinations(),
+    back: emptySignDestinations(),
+  };
+  sign.destinationsByAction = sign.destinationsByFace.front;
+  sign.targetSpaceId = "";
+  sign.customText = "";
+  sign.text = composeSignDefaultText(sign.installType, sign.number);
   state.signAssociationPicking = false;
+  clearSimulationResults();
   renderSignAssociationEditor();
+  setStatus(`已清除「${signDisplayName(sign)}」的全部导向信息，标识点位已保留。`);
+  redraw();
 });
 finishSignAssociationBtn.addEventListener("click", () => {
   state.signAssociationPicking = false;
@@ -6985,11 +7710,69 @@ finishSignAssociationBtn.addEventListener("click", () => {
   setStatus("导向标识的方向和目的地已关联。");
   redraw();
 });
-signAssociationImport.addEventListener("change", (event) => {
+function openSignListPasteDialog() {
+  const sign = selectedSign();
+  if (!sign) {
+    setStatus("请先在画板上选择一个导向标识，再上传空间方向清单。");
+    return false;
+  }
+  signListPasteTitle.textContent = `${signDisplayName(sign)} · 粘贴空间方向清单`;
+  signListPasteInput.value = "";
+  signListPasteInput.placeholder = sign.installType === "hanging"
+    ? "【正面】\n1.会议室01：向前\n2.工区A：左拐\n【背面】\n1.会议室02：向前\n2.茶水间：右拐"
+    : "1.会议室01：向前\n2.会议室02：左拐";
+  signListPasteDialog.showModal();
+  requestAnimationFrame(() => signListPasteInput.focus());
+  return true;
+}
+
+uploadSignCodeBtn?.addEventListener("click", openSignListPasteDialog);
+signAssociationPasteBtn?.addEventListener("click", openSignListPasteDialog);
+
+function closeSignListPasteDialog() {
+  if (signListPasteDialog?.open) signListPasteDialog.close();
+}
+
+closeSignListPasteBtn?.addEventListener("click", closeSignListPasteDialog);
+cancelSignListPasteBtn?.addEventListener("click", closeSignListPasteDialog);
+applySignListPasteBtn?.addEventListener("click", () => {
+  const sign = selectedSign();
+  if (!sign) {
+    closeSignListPasteDialog();
+    setStatus("当前导向标识已取消选择，请重新选择后再导入。");
+    return;
+  }
+  if (applySpaceDirectionText(sign, signListPasteInput.value, "粘贴内容")) {
+    closeSignListPasteDialog();
+  }
+});
+signListPasteInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    applySignListPasteBtn.click();
+  }
+});
+signListPasteDialog?.addEventListener("click", (event) => {
+  if (event.target === signListPasteDialog) closeSignListPasteDialog();
+});
+
+signAssociationImport.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
-  setStatus(`已选择「${file.name}」。导向关联导入格式我们下一步确认后接入解析。`);
-  event.target.value = "";
+  const sign = selectedSign();
+  if (!sign) {
+    setStatus("请先选择一个导向标识，再上传空间方向清单。");
+    event.target.value = "";
+    return;
+  }
+  try {
+    const text = await file.text();
+    applySpaceDirectionText(sign, text, `「${file.name}」`);
+  } catch (error) {
+    setStatus(`无法读取「${file.name}」：${error.message || "文件格式错误"}`);
+  } finally {
+    event.target.value = "";
+  }
 });
 Object.entries(layerInputs).forEach(([key, input]) => {
   input.addEventListener("change", () => {
@@ -7236,5 +8019,6 @@ syncPersonInputs();
 syncHangingFacingField();
 syncStartHeadingControls();
 updateSimulationPanels();
+renderImportedSpaces();
 updateStatus();
 redraw();

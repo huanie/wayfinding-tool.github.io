@@ -22,6 +22,15 @@
             <span>导入项目</span>
           </label>
           <button id="saveProject" class="plainAction" type="button"><i data-lucide="save" aria-hidden="true"></i><span>保存项目</span></button>
+          <button id="exportReport" class="plainAction" type="button" aria-expanded="false"><i data-lucide="file-down" aria-hidden="true"></i><span>输出报告</span></button>
+          <div id="reportPanel" class="projectReportPanel" hidden>
+            <label for="reportProjectName">项目名称</label>
+            <input id="reportProjectName" type="text" placeholder="例如：东畔科创中心10F" />
+            <label for="reportRemark">备注信息</label>
+            <textarea id="reportRemark" rows="3" placeholder="例如：本次报告用于10F导向标识方案复核"></textarea>
+            <button id="generateReport" type="button">生成 PDF</button>
+            <p id="reportStatus">报告包含 PRD 指标、目的地失败次数和测试模拟图。</p>
+          </div>
         </section>
 
         <section class="stepSection">
@@ -123,6 +132,13 @@
             <button id="infoMode" type="button"><i data-lucide="map-pin" aria-hidden="true"></i><span>空间信息</span></button>
             <div id="spacePanel" class="inlinePanel" hidden>
               <input id="infoInput" type="file" accept="image/*,.pdf" hidden />
+              <div class="spaceDataImport">
+                <button id="importSpaceList" class="plainAction" type="button">上传空间信息清单</button>
+                <input id="spaceListInput" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+                <span class="fieldHint">支持 CSV / Excel；字段：空间类型、编号、自定义名称</span>
+              </div>
+              <div id="spaceImportSummary" class="spaceImportSummary" hidden></div>
+              <div id="spaceImportList" class="spaceImportList" hidden></div>
               <div class="fieldStack">
                 <select id="spaceType">
                   <option value="elevator_lobby">电梯厅</option>
@@ -189,7 +205,7 @@
                 </label>
               </div>
               <div id="signInfoControls" class="fieldStack" hidden>
-                <button id="uploadSignCode" class="plainAction" type="button">上传导向代码</button>
+                <button id="uploadSignCode" class="plainAction" type="button">上传空间方向清单</button>
               </div>
               <label class="check compact">
                 <input id="showSignLabels" type="checkbox" />
@@ -322,7 +338,7 @@
                 <strong id="effectivePrdMeanValue">--</strong>
               </div>
               <p class="prdExplanation">
-                PRD（路径直达率，Pedestrian Route Directness）= 模拟路径距离 ÷ 最优路径距离。有效PRD均值仅统计寻路成功路线，用于判断导向标识是否能够有效指引。
+                PRD（路径直达率，Pedestrian Route Directness）= 模拟路径距离 ÷ 最优路径距离。汇总“全部”路径时，小于1的PRD按1计算；有效PRD均值仅统计寻路成功路线。
               </p>
               <section class="panelSection simulationFailureRule">
                 <label for="failureDistanceMultiplier">寻路失败判断条件</label>
@@ -408,10 +424,11 @@
               <button id="finishSignAssociation" type="button">完成</button>
             </div>
             <div class="associationImport">
-              <label class="upload subtle">
-                <input id="signAssociationImport" type="file" accept=".json,.csv,.txt,.xlsx,.xls" />
-                <span>上传导向关联信息</span>
-              </label>
+              <button id="signAssociationPaste" class="upload subtle" type="button">
+                <span>上传空间方向清单</span>
+              </button>
+              <input id="signAssociationImport" type="file" accept=".txt,.csv,text/plain,text/csv" hidden />
+              <span class="fieldHint">吊牌可用【正面】和【背面】分段；其他标识直接填写空间与方向</span>
             </div>
             <div id="signAssociationEmpty" class="placeholderText">请先选择一个导向标识。</div>
             <div id="signAssociationEditor" class="associationBody" hidden>
@@ -444,7 +461,7 @@
               <div id="signSpacePicker" class="spacePicker">
                 <div class="pickerHeader">
                   <span id="signSpacePickerTitle">选择空间信息</span>
-                  <button id="confirmSignDirection" type="button">确认方向</button>
+                  <button id="confirmSignDirection" type="button">清除导向信息</button>
                 </div>
                 <div id="signSpaceChecklist" class="spaceChecklist"></div>
               </div>
@@ -457,6 +474,21 @@
         </div>
       </main>
     </div>
+
+    <dialog id="signListPasteDialog" class="signListPasteDialog">
+      <div class="pasteDialogHeader">
+        <div>
+          <strong id="signListPasteTitle">粘贴空间方向清单</strong>
+          <span>吊牌使用【正面】、【背面】分段；每项格式为“编号.空间名称：方向”</span>
+        </div>
+        <button id="closeSignListPaste" type="button" aria-label="关闭">×</button>
+      </div>
+      <textarea id="signListPasteInput" rows="10" placeholder="【正面】&#10;1.会议室01：向前&#10;【背面】&#10;1.会议室02：左拐"></textarea>
+      <div class="pasteDialogActions">
+        <button id="cancelSignListPaste" type="button">取消</button>
+        <button id="applySignListPaste" type="button">确认导入</button>
+      </div>
+    </dialog>
 
     <script src="./lucide.min.js"></script>
     <script src="./app.js"></script>
